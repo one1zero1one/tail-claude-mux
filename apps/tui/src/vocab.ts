@@ -30,6 +30,7 @@ export const SEV_WAITING = "\u{F0D59}";   // nf-md-bell-alert (filled bell + ale
 export const SEV_READY = "\u{F05E1}";     // nf-md-check-circle-outline
 export const SEV_STOPPED = "\u{F0666}";   // nf-md-stop-circle (was U+F0667 stop_circle_outline)
 export const SEV_ERROR = "\u{F0028}";     // nf-md-alert-circle
+export const SEV_IDLE_DOT = "·";          // dim centre-dot for agentless / idle panes
 
 // ── Identity glyphs (right gutter) ──
 const ID_CLAUDE_CODE = "\u{100CC0}"; // Clawd, vendored at fonts/Clawd.ttf

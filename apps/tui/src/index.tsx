@@ -26,6 +26,7 @@ import {
   SEV_READY,
   SEV_STOPPED,
   SEV_ERROR,
+  SEV_IDLE_DOT,
   // SEV_WAITING (nf-md-bell-alert) doubles as the catch-all system-tag glyph
   // when a row's source matches /^\[.+\]$/ — see ActivityZone Rule 0.
   BRAND_CLAWD,
@@ -1963,12 +1964,11 @@ function PaneRowItem(props: PaneRowItemProps) {
   const [isDismissHover, setIsDismissHover] = createSignal(false);
   const [isFlash, setIsFlash] = createSignal(false);
 
-  // Resolve the five-label scheme from tracker status + liveness.
-  // When there's no agent attached, treat the row as "ready" (idle visuals
-  // for no-agent panes land in Task 4).
-  const label = (): "working" | "waiting" | "ready" | "stopped" | "error" => {
+  // Resolve the six-label scheme from tracker status + liveness.
+  // "idle" means no agent is attached — bare shell / non-Claude pane.
+  const label = (): "working" | "waiting" | "ready" | "stopped" | "error" | "idle" => {
     const agent = props.pane.agent;
-    if (!agent) return "ready";
+    if (!agent) return "idle";
     const s = agent.status;
     if (s === "running") return "working";
     if (s === "waiting") return "waiting";
@@ -1988,6 +1988,7 @@ function PaneRowItem(props: PaneRowItemProps) {
 
   const icon = () => {
     const l = label();
+    if (l === "idle") return SEV_IDLE_DOT;
     if (l === "working") return SPINNERS[props.spinIdx() % SPINNERS.length]!;
     if (l === "waiting") return SEV_WAITING;
     if (l === "ready") return SEV_READY;
@@ -1998,6 +1999,7 @@ function PaneRowItem(props: PaneRowItemProps) {
 
   const color = () => {
     const l = label();
+    if (l === "idle") return P().overlay0;
     if (l === "working") return P().blue;
     if (l === "waiting") return P().yellow;
     if (l === "ready") return P().green;
@@ -2031,18 +2033,20 @@ function PaneRowItem(props: PaneRowItemProps) {
       >
         {/* Row 1: dismiss + window name + threadId ... status icon */}
         <box flexDirection="row">
-          <text
-            flexShrink={0}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              props.onDismiss();
-            }}
-            onMouseOver={() => setIsDismissHover(true)}
-            onMouseOut={() => setIsDismissHover(false)}
-          >
-            <span style={{ fg: isDismissHover() ? P().red : P().overlay0 }}>{"✕ "}</span>
-          </text>
+          <Show when={props.pane.agent}>
+            <text
+              flexShrink={0}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                props.onDismiss();
+              }}
+              onMouseOver={() => setIsDismissHover(true)}
+              onMouseOut={() => setIsDismissHover(false)}
+            >
+              <span style={{ fg: isDismissHover() ? P().red : P().overlay0 }}>{"✕ "}</span>
+            </text>
+          </Show>
           <text flexGrow={1} truncate>
             <span style={{
               fg: isUnseen()
@@ -2050,7 +2054,10 @@ function PaneRowItem(props: PaneRowItemProps) {
                 : (props.isKeyboardFocused ? P().text : P().subtext1),
               attributes: props.isKeyboardFocused ? BOLD : undefined,
             }}>{props.pane.windowName}</span>
-            <Show when={props.pane.agent?.threadId}>
+            <Show when={props.pane.agent?.threadId}
+                  fallback={
+                    <span style={{ fg: P().overlay0, attributes: DIM }}>{" ("}{props.pane.paneCurrentCommand}{")"}</span>
+                  }>
               <span style={{ fg: P().overlay0, attributes: DIM }}>{" #"}{shortThreadId(props.pane.agent!.threadId!)}</span>
             </Show>
           </text>
