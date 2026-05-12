@@ -2076,12 +2076,18 @@ function PaneRowItem(props: PaneRowItemProps) {
                 ? P().teal
                 : (props.isKeyboardFocused ? P().text : P().subtext1),
               attributes: props.isKeyboardFocused ? BOLD : undefined,
-            }}>{props.pane.agent?.threadName ?? ""}</span>
-            <Show when={props.pane.agent?.threadId}
-                  fallback={
-                    <span style={{ fg: P().overlay0, attributes: DIM }}>{" ("}{props.pane.paneCurrentCommand}{")"}</span>
-                  }>
+            }}>{
+              (() => {
+                const t = props.pane.agent?.threadName;
+                if (!t) return "";
+                return t.length > 30 ? t.slice(0, 29) + "…" : t;
+              })()
+            }</span>
+            <Show when={props.pane.agent?.threadId}>
               <span style={{ fg: P().overlay0, attributes: DIM }}>{" #"}{shortThreadId(props.pane.agent!.threadId!)}</span>
+            </Show>
+            <Show when={!props.pane.agent}>
+              <span style={{ fg: P().overlay0, attributes: DIM }}>{" ("}{props.pane.paneCurrentCommand}{")"}</span>
             </Show>
           </text>
           <text flexShrink={0}>
