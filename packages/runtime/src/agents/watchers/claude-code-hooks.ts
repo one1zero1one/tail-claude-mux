@@ -142,6 +142,10 @@ interface ThreadState {
   threadName?: string;
   projectDir: string;
   nameResolved: boolean;
+  /** Path to this thread's JSONL, set once resolved. Enables incremental tail to pick up /rename. */
+  jsonlPath?: string;
+  /** Byte offset already consumed when scanning for `custom-title` updates. */
+  jsonlOffset?: number;
   /** Last tool description from PreToolUse/PermissionRequest — cleared on non-tool events */
   lastToolDescription?: string;
 }
@@ -271,6 +275,10 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
       this.threads.set(threadId, state);
       // Queue one-time thread name resolution
       this.resolveThreadName(threadId, payload.cwd);
+    } else {
+      // Pick up /rename (writes a new custom-title entry to the JSONL between
+      // hook events). Fire-and-forget — emits independently when title changes.
+      this.refreshTitleFromJsonl(threadId);
     }
 
     // SessionEnd must bypass the dedup check below: a prior Stop event
@@ -398,6 +406,8 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
           threadName,
           projectDir,
           nameResolved: true,
+          jsonlPath: filePath,
+          jsonlOffset: Buffer.byteLength(text, "utf-8"),
         });
 
         this.ctx?.emit({
@@ -446,6 +456,11 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
         }
       }
 
+      // Cache path + byte offset so refreshTitleFromJsonl() can tail incremental
+      // appends (e.g. /rename writing a new custom-title entry).
+      state.jsonlPath = filePath;
+      state.jsonlOffset = Buffer.byteLength(text, "utf-8");
+
       if (threadName && this.ctx) {
         state.threadName = threadName;
         // Re-emit with the resolved name
@@ -456,5 +471,46 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
       }
       return; // Found the file, done
     }
+  }
+
+  /** Tail the thread's JSONL from the last consumed offset and pick up any new
+   *  `custom-title` entry (written by /rename). Emits when the title changes
+   *  so the sidebar refreshes without waiting for a status change.
+   *  Fire-and-forget: caller does not need to await. */
+  private async refreshTitleFromJsonl(threadId: string): Promise<void> {
+    const state = this.threads.get(threadId);
+    if (!state || !state.jsonlPath || state.jsonlOffset === undefined) return;
+
+    let size: number;
+    try { size = (await stat(state.jsonlPath)).size; } catch { return; }
+    if (size <= state.jsonlOffset) return;
+
+    let chunk: string;
+    try {
+      chunk = await Bun.file(state.jsonlPath).slice(state.jsonlOffset, size).text();
+    } catch { return; }
+
+    // Only consume up to the last complete line — a partial trailing line
+    // means a write is still in progress; we'll catch it next time.
+    const lastNl = chunk.lastIndexOf("\n");
+    if (lastNl < 0) return;
+    const consumed = chunk.slice(0, lastNl + 1);
+    state.jsonlOffset += Buffer.byteLength(consumed, "utf-8");
+
+    let newName: string | undefined;
+    for (const line of consumed.split("\n")) {
+      if (!line) continue;
+      let entry: JournalEntry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      const ct = extractCustomTitle(entry);
+      if (ct) newName = ct;
+    }
+
+    if (!newName || newName === state.threadName) return;
+
+    state.threadName = newName;
+    if (!this.ctx) return;
+    const session = this.ctx.resolveSession(state.projectDir);
+    if (session) this.emit(threadId, state, session);
   }
 }
