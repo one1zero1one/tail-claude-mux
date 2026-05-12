@@ -2023,7 +2023,7 @@ function AgentListItem(props: AgentListItemProps) {
                 ? P().teal
                 : (props.isKeyboardFocused ? P().text : P().subtext1),
               attributes: props.isKeyboardFocused ? BOLD : undefined,
-            }}>{props.agent.agent}</span>
+            }}>{props.agent.windowName ?? props.agent.agent}</span>
             <Show when={props.agent.threadId}>
               <span style={{ fg: P().overlay0, attributes: DIM }}>{" #"}{shortThreadId(props.agent.threadId!)}</span>
             </Show>

@@ -1252,7 +1252,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
 
     const raw = shell([
       "tmux", "list-panes", "-a",
-      "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{pane_title}",
+      "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{window_name}|#{pane_title}",
     ]);
     if (!raw) return result;
 
@@ -1261,12 +1261,14 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
       const idx2 = line.indexOf("|", idx1 + 1);
       const idx3 = line.indexOf("|", idx2 + 1);
       const idx4 = line.indexOf("|", idx3 + 1);
+      const idx5 = line.indexOf("|", idx4 + 1);
       return {
         session: line.slice(0, idx1),
         id: line.slice(idx1 + 1, idx2),
         pid: parseInt(line.slice(idx2 + 1, idx3), 10),
         cmd: line.slice(idx3 + 1, idx4),
-        title: line.slice(idx4 + 1),
+        windowName: line.slice(idx4 + 1, idx5),
+        title: line.slice(idx5 + 1),
       };
     });
 
@@ -1293,7 +1295,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
           sessionAgents = [];
           result.set(pane.session, sessionAgents);
         }
-        sessionAgents.push({ agent: agentName, paneId: pane.id });
+        sessionAgents.push({ agent: agentName, paneId: pane.id, windowName: pane.windowName });
         break; // One agent per pane — first match wins (ordered so parents precede child tools)
       }
     }

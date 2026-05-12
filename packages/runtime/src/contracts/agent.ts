@@ -20,6 +20,8 @@ export interface AgentEvent {
   unseen?: boolean;
   /** Set by pane scanner — the tmux pane ID where this agent was detected */
   paneId?: string;
+  /** Set by pane scanner — the tmux window name containing paneId. Cleared when paneId clears. */
+  windowName?: string;
   /** Whether the agent process is alive, exited, or unknown (no pane info) */
   liveness?: AgentLiveness;
   /** Human-readable description of current activity, e.g. "Reading config.ts" or "Bash: git push" */
@@ -38,4 +40,5 @@ export const TERMINAL_STATUSES = new Set<AgentStatus>(["done", "error", "interru
 export interface PanePresenceInput {
   agent: string;
   paneId: string;
+  windowName?: string;
 }

@@ -81,6 +81,7 @@ export class AgentTracker {
     if (prev?.paneId) {
       event.paneId = event.paneId ?? prev.paneId;
       event.liveness = event.liveness ?? prev.liveness;
+      event.windowName = event.windowName ?? prev.windowName;
     }
     // Stamp first-seen timestamp once per instance so getAgents() sort is
     // stable across subsequent status updates.
@@ -95,6 +96,7 @@ export class AgentTracker {
         if (ev.paneId && !event.paneId) {
           event.paneId = ev.paneId;
           event.liveness = ev.liveness;
+          event.windowName = ev.windowName;
         }
         sessionInstances.delete(k);
         this.unseenInstances.delete(this.unseenKey(event.session, k));
@@ -345,6 +347,7 @@ export class AgentTracker {
             // Watcher-sourced — keep entry, clear pane binding
             event.liveness = "exited";
             event.paneId = undefined;
+            event.windowName = undefined;
           }
           changed = true;
         }
@@ -381,9 +384,10 @@ export class AgentTracker {
 
       if (bestEvent && bestKey) {
         claimedKeys.add(bestKey);
-        const wasDifferent = bestEvent.paneId !== pa.paneId || bestEvent.liveness !== "alive";
+        const wasDifferent = bestEvent.paneId !== pa.paneId || bestEvent.liveness !== "alive" || bestEvent.windowName !== pa.windowName;
         bestEvent.paneId = pa.paneId;
         bestEvent.liveness = "alive";
+        bestEvent.windowName = pa.windowName;
         // Resolved — any pending miss for this entry is no longer relevant.
         this.clearMissState(session, bestKey);
         if (wasDifferent) changed = true;
@@ -401,14 +405,16 @@ export class AgentTracker {
           status: "idle",
           ts: Date.now(),
           paneId: pa.paneId,
+          windowName: pa.windowName,
           liveness: "alive",
         });
         changed = true;
       } else {
         const existing = sessionInstances.get(syntheticKey)!;
-        const wasDifferent = existing.paneId !== pa.paneId || existing.liveness !== "alive";
+        const wasDifferent = existing.paneId !== pa.paneId || existing.liveness !== "alive" || existing.windowName !== pa.windowName;
         existing.paneId = pa.paneId;
         existing.liveness = "alive";
+        existing.windowName = pa.windowName;
         this.clearMissState(session, syntheticKey);
         if (wasDifferent) changed = true;
       }
