@@ -2083,11 +2083,13 @@ function PaneRowItem(props: PaneRowItemProps) {
                 return t.length > 30 ? t.slice(0, 29) + "…" : t;
               })()
             }</span>
-            <Show when={props.pane.agent?.threadId}>
+            <Show when={props.pane.agent?.threadId}
+                  fallback={
+                    <span style={{ fg: P().overlay0, attributes: DIM }}>{" ("}{
+                      props.pane.agent ? props.pane.agent.agent : props.pane.paneCurrentCommand
+                    }{")"}</span>
+                  }>
               <span style={{ fg: P().overlay0, attributes: DIM }}>{" #"}{shortThreadId(props.pane.agent!.threadId!)}</span>
-            </Show>
-            <Show when={!props.pane.agent}>
-              <span style={{ fg: P().overlay0, attributes: DIM }}>{" ("}{props.pane.paneCurrentCommand}{")"}</span>
             </Show>
           </text>
           <text flexShrink={0}>
