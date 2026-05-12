@@ -2076,7 +2076,7 @@ function PaneRowItem(props: PaneRowItemProps) {
                 ? P().teal
                 : (props.isKeyboardFocused ? P().text : P().subtext1),
               attributes: props.isKeyboardFocused ? BOLD : undefined,
-            }}>{props.pane.windowName}</span>
+            }}>{props.pane.agent?.threadName ?? ""}</span>
             <Show when={props.pane.agent?.threadId}
                   fallback={
                     <span style={{ fg: P().overlay0, attributes: DIM }}>{" ("}{props.pane.paneCurrentCommand}{")"}</span>
