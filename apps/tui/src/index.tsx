@@ -767,7 +767,7 @@ function App() {
   const S = () => theme().status;
 
   const [sessions, setSessions] = createStore<SessionData[]>([]);
-  const [focusedSession, setFocusedSession] = createSignal<string | null>(null);
+  const [focusedSession, _setFocusedSession] = createSignal<string | null>(null);
   const [currentSession, setCurrentSession] = createSignal<string | null>(null);
   const [mySession, setMySession] = createSignal<string | null>(null);
   const [connected, setConnected] = createSignal(false);
@@ -799,6 +799,17 @@ function App() {
   let ws: WebSocket | null = null;
   let startupFocusSynced = false;
   const startupSessionName = getLocalSessionName();
+
+  // tcm patch: lock focused row to this TUI's own session so sidebars on
+  // multi-monitor / Ghostty-per-session setups don't sync cursors with each
+  // other. setFocusedSession silently rejects updates that try to move focus
+  // off the local session. Cursor nav (j/k) and Enter-to-switch become
+  // no-ops via the early returns in moveLocalFocus / switchToSession below.
+  const LOCK_TO_LOCAL = true;
+  const setFocusedSession = (name: string | null) => {
+    if (LOCK_TO_LOCAL && startupSessionName && name !== startupSessionName) return;
+    _setFocusedSession(name);
+  };
 
   const focusedData = createMemo(() =>
     sessions.find((s) => s.name === focusedSession()) ?? null,
@@ -879,6 +890,9 @@ function App() {
   let focusSuppressUntil = 0;
 
   function switchToSession(name: string) {
+    // tcm patch: in LOCK_TO_LOCAL mode, sidebar can't drive session switches
+    // (the user navigates via AeroSpace hotkeys instead). Silently no-op.
+    if (LOCK_TO_LOCAL && startupSessionName && name !== startupSessionName) return;
     // Optimistic local update — makes rapid Tab repeat instant by removing
     // the server/hook round-trip from the next-Tab decision.
     // The server's focus/state broadcast will reconcile if needed.
@@ -903,6 +917,8 @@ function App() {
   }
 
   function moveLocalFocus(delta: -1 | 1) {
+    // tcm patch: cursor is locked to local session — j/k do nothing.
+    if (LOCK_TO_LOCAL) return;
     const list = sessions;
     if (list.length === 0) return;
 
