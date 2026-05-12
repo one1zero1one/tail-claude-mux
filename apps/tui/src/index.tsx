@@ -2080,7 +2080,7 @@ function PaneRowItem(props: PaneRowItemProps) {
               (() => {
                 const t = props.pane.agent?.threadName;
                 if (!t) return "";
-                return t.length > 30 ? t.slice(0, 29) + "…" : t;
+                return t.length > 20 ? t.slice(0, 19) + "…" : t;
               })()
             }</span>
             <Show when={props.pane.agent?.threadId}
@@ -2102,11 +2102,19 @@ function PaneRowItem(props: PaneRowItemProps) {
           <text truncate>
             <span style={{ fg: P().overlay0, attributes: DIM }}>{props.treeTick === "last" ? TREE_LAST : TREE_MID}{" "}</span>
             <Show when={props.pane.branch}>
-              <span style={{ fg: P().pink, attributes: DIM }}>{props.pane.branch}</span>
+              <span style={{ fg: P().pink, attributes: DIM }}>{
+                (() => {
+                  const b = props.pane.branch!;
+                  return b.length > 14 ? b.slice(0, 13) + "…" : b;
+                })()
+              }</span>
               <span style={{ fg: P().overlay0, attributes: DIM }}>{" @ "}</span>
             </Show>
             <span style={{ fg: P().overlay0, attributes: DIM }}>{
-              props.pane.paneCurrentPath.split("/").filter(Boolean).pop() ?? ""
+              (() => {
+                const leaf = props.pane.paneCurrentPath.split("/").filter(Boolean).pop() ?? "";
+                return leaf.length > 14 ? leaf.slice(0, 13) + "…" : leaf;
+              })()
             }</span>
           </text>
         </box>
