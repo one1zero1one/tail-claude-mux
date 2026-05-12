@@ -88,20 +88,36 @@ export class AgentTracker {
     event.firstSeenTs = prev?.firstSeenTs ?? event.ts;
     sessionInstances.set(key, event);
 
-    // Clean up any synthetic pane-keyed entries for this agent
-    // (pane scanner may have created a minimal synthetic before the watcher seeded)
+    // Clean up the synthetic pane-keyed entry that corresponds to THIS pane.
+    // Previously this loop deleted every same-agent synthetic, which destroyed
+    // sibling synthetics for other panes in the same window. With the watcher
+    // event's paneId, we can target precisely.
+    //
+    // When the watcher provides no paneId (legacy seed-merge path), we count
+    // same-agent synthetics first: only consume if there is exactly one (no
+    // sibling to protect). This preserves the single-pane seed-merge behaviour
+    // without bleeding into the multi-pane case.
+    const sameAgentSynthetics = [...sessionInstances].filter(
+      ([k, ev]) => k !== key && ev.agent === event.agent && k.includes(":pane:"),
+    );
+    const canUnboundMerge = !event.paneId && sameAgentSynthetics.length === 1;
+
     for (const [k, ev] of sessionInstances) {
-      if (k !== key && ev.agent === event.agent && k.includes(":pane:")) {
-        // Transfer pane info from the synthetic to the watcher entry
-        if (ev.paneId && !event.paneId) {
-          event.paneId = ev.paneId;
-          event.liveness = ev.liveness;
-          event.windowName = ev.windowName;
-        }
-        sessionInstances.delete(k);
-        this.unseenInstances.delete(this.unseenKey(event.session, k));
-        this.clearMissState(event.session, k);
+      if (k === key) continue;
+      if (ev.agent !== event.agent) continue;
+      if (!k.includes(":pane:")) continue;
+      const matchesByPane = event.paneId && ev.paneId === event.paneId;
+      if (!matchesByPane && !canUnboundMerge) continue;
+      // Transfer pane info to the watcher entry when it lacks one.
+      if (ev.paneId && !event.paneId) {
+        event.paneId = ev.paneId;
+        event.liveness = ev.liveness;
+        event.windowName = ev.windowName;
       }
+      sessionInstances.delete(k);
+      this.unseenInstances.delete(this.unseenKey(event.session, k));
+      this.clearMissState(event.session, k);
+      if (!event.paneId) break; // unbound merge: only consume one synthetic
     }
 
     // Track event timestamps

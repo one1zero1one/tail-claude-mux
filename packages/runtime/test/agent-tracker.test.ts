@@ -774,4 +774,40 @@ describe("AgentTracker", () => {
       expect(t.getAgents("sess-1")[0]!.liveness).toBe("alive");
     });
   });
+
+  test("emit: watcher event for pane A does not delete sibling synthetic for pane B", () => {
+    // Two panes in the same session run claude-code. Pane scanner finds both
+    // before either fires a Stop hook → two synthetic entries.
+    // Note: two separate scans are needed to create two distinct synthetics;
+    // a single scan with two same-agent panes would greedily claim-and-overwrite
+    // the first synthetic's paneId (applyPanePresence step 2 limitation).
+    tracker.applyPanePresence("sess-1", [
+      { agent: "claude-code", paneId: "%10" },
+    ]);
+    tracker.applyPanePresence("sess-1", [
+      { agent: "claude-code", paneId: "%10" },
+      { agent: "claude-code", paneId: "%11" },
+    ]);
+    expect(tracker.getAgents("sess-1")).toHaveLength(2);
+
+    // Pane %10's Claude fires Stop → watcher event arrives with paneId %10.
+    tracker.applyEvent(event({
+      agent: "claude-code",
+      session: "sess-1",
+      status: "done",
+      threadId: "t-from-pane-10",
+      paneId: "%10",
+    }));
+
+    const agents = tracker.getAgents("sess-1");
+    expect(agents).toHaveLength(2);
+    // The pane-%10 synthetic was merged into the watcher entry (threadId set).
+    const merged = agents.find((a) => a.threadId === "t-from-pane-10");
+    expect(merged).toBeDefined();
+    expect(merged!.paneId).toBe("%10");
+    // The pane-%11 synthetic must survive untouched.
+    const sibling = agents.find((a) => !a.threadId);
+    expect(sibling).toBeDefined();
+    expect(sibling!.paneId).toBe("%11");
+  });
 });
