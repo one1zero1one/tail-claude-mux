@@ -224,6 +224,81 @@ function WrapRule(props: { direction: "up" | "down"; palette: ThemePalette }) {
 }
 
 /**
+ * Compact one-line view of a session for the "other sessions" strip
+ * rendered below the focused-session card when LOCK_TO_LOCAL is on.
+ *
+ * Layout:  `<status>  <name>  <agent-count>  <branch>`
+ *
+ * - status glyph: rolled-up worst-of agent state (same logic as SessionCard)
+ * - name: truncated to fit
+ * - agent-count: number of agents in the session (always shown, even 0)
+ * - branch: truncated; dim when nominal, hidden when empty
+ *
+ * Purely informational — no interaction.
+ */
+function OtherSessionRow(props: {
+  session: SessionData;
+  palette: ThemePalette;
+  paneFocused: boolean;
+  spinIdx: Accessor<number>;
+}) {
+  const P = () => props.palette;
+
+  const label = () => {
+    const state = props.session.agentState;
+    if (!state) return "ready" as const;
+    if (state.status === "running") return "working" as const;
+    if (state.status === "waiting") return "waiting" as const;
+    if (state.status === "error") return "error" as const;
+    if (state.liveness === "alive") return "ready" as const;
+    return "stopped" as const;
+  };
+
+  const statusIcon = () => {
+    const l = label();
+    if (l === "working") return SEV_WORKING_SPINNER[props.spinIdx() % SEV_WORKING_SPINNER.length]!;
+    if (l === "waiting") return SEV_WAITING;
+    if (l === "error") return SEV_ERROR;
+    if (l === "ready") return SEV_READY;
+    return SEV_STOPPED;
+  };
+
+  const statusColor = () => {
+    const l = label();
+    if (l === "working") return P().blue;
+    if (l === "waiting") return P().yellow;
+    if (l === "ready") return P().green;
+    if (l === "error") return P().red;
+    return P().surface2;
+  };
+
+  const dimFg = () => props.paneFocused ? P().overlay1 : P().surface2;
+  const nameFg = () => props.paneFocused ? P().subtext0 : P().overlay0;
+
+  const truncName = (max: number) => {
+    const n = props.session.name;
+    return n.length > max ? n.slice(0, max - 1) + "…" : n;
+  };
+  const truncBranch = (max: number) => {
+    const b = props.session.branch ?? "";
+    if (!b) return "";
+    return b.length > max ? b.slice(0, max - 1) + "…" : b;
+  };
+
+  return (
+    <box flexDirection="row" paddingLeft={1} paddingRight={1} height={1}>
+      <text style={{ fg: statusColor() }} flexShrink={0}>{statusIcon() || " "}{" "}</text>
+      <text style={{ fg: nameFg() }} flexShrink={1}>{truncName(12)}</text>
+      <text style={{ fg: dimFg() }} flexGrow={1}>{" "}</text>
+      <text style={{ fg: dimFg() }} flexShrink={0}>
+        {String(props.session.agents.length)}
+        {props.session.branch ? " " + BRANCH_GLYPH + truncBranch(10) : ""}
+      </text>
+    </box>
+  );
+}
+
+/**
  * Detect a trailing outcome marker in an activity entry's description.
  *
  * Detects the trailing `(passed)` or `(failed)` suffix so we can render it
@@ -847,6 +922,12 @@ function App() {
   const sessionsBefore = createMemo(() => rolodex().before);
   const sessionsAfter = createMemo(() => rolodex().after);
 
+  // All sessions except the locally-focused one — used by the compact
+  // "other sessions" strip below the focused card in LOCK_TO_LOCAL mode.
+  const otherSessions = createMemo(() =>
+    sessions.filter((s) => s.name !== focusedSession()),
+  );
+
   // Compute the tallest card height across all sessions so the
   // focused-card frame never resizes as you cycle.
   // Accounts for text wrapping in narrow sidebars.
@@ -1382,7 +1463,9 @@ function App() {
 
       {/* Session rolodex — focused card pinned at center, neighbors above/below */}
       <box flexDirection="column" flexGrow={1} flexShrink={1} paddingTop={1}>
-        {/* Sessions above focused — bottom-aligned so nearest is adjacent */}
+        {/* Sessions above focused — bottom-aligned so nearest is adjacent.
+            Hidden in LOCK_TO_LOCAL mode (no rolodex, focused at top). */}
+        <Show when={!LOCK_TO_LOCAL}>
         <box flexDirection="column" flexGrow={1} flexBasis={0} justifyContent="flex-end" gap={1} paddingBottom={1}>
           <For each={sessionsBefore()}>
             {(session, i) => (
@@ -1426,9 +1509,10 @@ function App() {
             )}
           </For>
         </box>
+        </Show>
 
-        {/* Always-visible chevron wrap-rule above the focused card. */}
-        <WrapRule direction="up" palette={P()} />
+        {/* Always-visible chevron wrap-rule above the focused card. Hidden in lock mode. */}
+        <Show when={!LOCK_TO_LOCAL}><WrapRule direction="up" palette={P()} /></Show>
 
         {/* Focused session — bordered frame pinned at center.
             +2 on height: maxCardHeight() returns inner content rows (name +
@@ -1475,10 +1559,31 @@ function App() {
           </Show>
         </box>
 
-        {/* Always-visible chevron wrap-rule below the focused card. */}
-        <WrapRule direction="down" palette={P()} />
+        {/* Wrap-rule + below-focused rolodex hidden in lock mode. */}
+        <Show when={!LOCK_TO_LOCAL}><WrapRule direction="down" palette={P()} /></Show>
 
-        {/* Sessions below focused */}
+        {/* Compact "other sessions" strip — lock mode only. Single-line rows
+            with status glyph + name + agent count + branch. No interaction. */}
+        <Show when={LOCK_TO_LOCAL}>
+          <box flexDirection="column" flexShrink={0} paddingTop={1}>
+            <box height={1} paddingLeft={1} paddingRight={1} flexShrink={0}>
+              <text style={{ fg: P().surface1 }}>{"─ other ".padEnd(200, "─")}</text>
+            </box>
+            <For each={otherSessions()}>
+              {(session) => (
+                <OtherSessionRow
+                  session={session}
+                  palette={P()}
+                  paneFocused={paneFocused()}
+                  spinIdx={spinIdx}
+                />
+              )}
+            </For>
+          </box>
+        </Show>
+
+        {/* Sessions below focused (rolodex mode only). */}
+        <Show when={!LOCK_TO_LOCAL}>
         <box flexDirection="column" flexGrow={1} flexBasis={0} gap={1} paddingTop={1}>
           <For each={sessionsAfter()}>
             {(session, i) => (
@@ -1522,6 +1627,7 @@ function App() {
             )}
           </For>
         </box>
+        </Show>
       </box>
 
       {/* Activity zone — fixed-height structural band below the rolodex. */}
