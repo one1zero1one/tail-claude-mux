@@ -391,6 +391,11 @@ export class AgentTracker {
       for (const [k, ev] of sessionInstances) {
         if (ev.agent !== pa.agent) continue;
         if (claimedKeys.has(k)) continue;
+        // Don't steal another pane's synthetic. A :pane:-keyed entry bound
+        // to a different paneId belongs to a sibling pane that is alive
+        // right now (this scan would have unclaimed it in step 1 otherwise).
+        // Leave it alone so the sibling keeps its identity.
+        if (k.includes(":pane:") && ev.paneId && ev.paneId !== pa.paneId) continue;
         if (!bestEvent || !k.includes(":pane:")) {
           bestKey = k;
           bestEvent = ev;

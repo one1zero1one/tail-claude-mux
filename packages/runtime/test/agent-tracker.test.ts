@@ -775,6 +775,23 @@ describe("AgentTracker", () => {
     });
   });
 
+  test("applyPanePresence: two same-agent panes in one call produce two distinct synthetics", () => {
+    // Cold-boot: pane scanner finds two Claudes in the same session in one
+    // scan, before either fires a Stop hook. Both panes should appear as
+    // synthetics with their own paneId — neither should be overwritten by
+    // the other.
+    tracker.applyPanePresence("sess-1", [
+      { agent: "claude-code", paneId: "%10" },
+      { agent: "claude-code", paneId: "%11" },
+    ]);
+
+    const agents = tracker.getAgents("sess-1");
+    expect(agents).toHaveLength(2);
+
+    const paneIds = agents.map((a) => a.paneId).sort();
+    expect(paneIds).toEqual(["%10", "%11"]);
+  });
+
   test("emit: watcher event for pane A does not delete sibling synthetic for pane B", () => {
     // Two panes in the same session run claude-code. Pane scanner finds both
     // before either fires a Stop hook → two synthetic entries.
