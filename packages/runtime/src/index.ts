@@ -39,6 +39,7 @@ export {
   C,
 } from "./shared";
 export type {
+  PaneRow,
   SessionData,
   ServerState,
   FocusUpdate,

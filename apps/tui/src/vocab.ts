@@ -94,3 +94,8 @@ export const ACTIVITY_VERB_ERROR    = "\u{F00D}";  // nf-fa-xmark (was nf-fa-cro
 // Misc / fallback verb — used when classify.ts returns undefined. Keeps col 1
 // visually consistent (no blank cells in the verb stripe).
 export const ACTIVITY_VERB_MISC     = "\u{F08BB}"; // nf-md-cog-outline
+
+// ── Tree / outline connectors ──
+// Plain Unicode box-drawing characters (no glyph budget needed).
+export const TREE_LAST = "└";
+export const TREE_MID  = "├";

@@ -9,6 +9,7 @@ import { ensureServer } from "@tcm/runtime";
 import {
   type ServerMessage,
   type SessionData,
+  type PaneRow,
   type ClientCommand,
   type Theme,
   type ThemePalette,
@@ -45,6 +46,7 @@ import {
   ACTIVITY_VERB_THINKING,
   ACTIVITY_VERB_ERROR,
   ACTIVITY_VERB_MISC,
+  TREE_LAST,
 } from "./vocab";
 import { tier } from "./tiers";
 import { classifyVerb, type Verb } from "./classify";
@@ -939,7 +941,7 @@ function App() {
     let max = 0;
     for (const session of sessions) {
       let h = 1; // row 1: name
-      if (session.branch) h++; // row 2: branch
+      // session-level branch chip removed — branch is now shown per pane row
 
       // expanded content
       const { project, parent } = formatDir(session.dir);
@@ -948,11 +950,10 @@ function App() {
         if (parent) h++;
       }
 
-      const agents = session.agents ?? [];
-      for (const _agent of agents) {
-        h++; // agent row — single line now (Row 2 retired in favour of ActivityZone)
+      for (const _pane of (session.paneRows ?? [])) {
+        h += 2; // row 1 (name + status) + row 2 (branch line)
       }
-      // no gap between agents — card border provides visual grouping
+      // no gap between pane rows — card border provides visual grouping
 
       // Status / progress / logs render in the ActivityZone now, not in the
       // focused card. No height contribution from metadata.
@@ -1016,59 +1017,66 @@ function App() {
 
   function moveAgentFocus(delta: -1 | 1) {
     const data = focusedData();
-    const agents = data?.agents ?? [];
-    if (agents.length === 0) return;
+    const rows = data?.paneRows ?? [];
+    if (rows.length === 0) return;
     const idx = focusedAgentIdx();
-    const next = Math.max(0, Math.min(agents.length - 1, idx + delta));
+    const next = Math.max(0, Math.min(rows.length - 1, idx + delta));
     setFocusedAgentIdx(next);
   }
 
   function activateFocusedAgent() {
     const data = focusedData();
-    const agents = data?.agents ?? [];
-    const agent = agents[focusedAgentIdx()];
-    if (!agent || !data) return;
+    const rows = data?.paneRows ?? [];
+    const pane = rows[focusedAgentIdx()];
+    if (!pane || !data) return;
+    const logLine = pane.agent
+      ? `keyboard focus-agent-pane session=${data.name} agent=${pane.agent.agent} threadId=${pane.agent.threadId} threadName=${pane.agent.threadName}`
+      : `keyboard focus-pane paneId=${pane.paneId}`;
     appendFileSync("/tmp/tcm-tui-agent-click.log",
-      `[${new Date().toISOString()}] keyboard focus-agent-pane session=${data.name} agent=${agent.agent} threadId=${agent.threadId} threadName=${agent.threadName}\n`);
-    send({
-      type: "focus-agent-pane",
-      session: data.name,
-      agent: agent.agent,
-      threadId: agent.threadId,
-      threadName: agent.threadName,
-    });
+      `[${new Date().toISOString()}] ${logLine}\n`);
+    if (pane.agent) {
+      send({
+        type: "focus-agent-pane",
+        session: data.name,
+        agent: pane.agent.agent,
+        threadId: pane.agent.threadId,
+        threadName: pane.agent.threadName,
+      });
+    } else {
+      send({ type: "focus-pane", paneId: pane.paneId });
+    }
   }
 
   function dismissFocusedAgent() {
     const data = focusedData();
-    const agents = data?.agents ?? [];
-    const agent = agents[focusedAgentIdx()];
-    if (!agent || !data) return;
+    const rows = data?.paneRows ?? [];
+    const pane = rows[focusedAgentIdx()];
+    if (!pane || !data || !pane.agent) return;
     send({
       type: "dismiss-agent",
       session: data.name,
-      agent: agent.agent,
-      threadId: agent.threadId,
+      agent: pane.agent.agent,
+      threadId: pane.agent.threadId,
     });
     // Adjust index if we dismissed the last item
-    if (focusedAgentIdx() >= agents.length - 1 && agents.length > 1) {
-      setFocusedAgentIdx(agents.length - 2);
+    if (focusedAgentIdx() >= rows.length - 1 && rows.length > 1) {
+      setFocusedAgentIdx(rows.length - 2);
     }
-    // If no agents left, go back to sessions
-    if (agents.length <= 1) setPanelFocus("sessions");
+    // If no pane rows left, go back to sessions
+    if (rows.length <= 1) setPanelFocus("sessions");
   }
 
   function killFocusedAgentPane() {
     const data = focusedData();
-    const agents = data?.agents ?? [];
-    const agent = agents[focusedAgentIdx()];
-    if (!agent || !data) return;
+    const rows = data?.paneRows ?? [];
+    const pane = rows[focusedAgentIdx()];
+    if (!pane || !data || !pane.agent) return;
     send({
       type: "kill-agent-pane",
       session: data.name,
-      agent: agent.agent,
-      threadId: agent.threadId,
-      threadName: agent.threadName,
+      agent: pane.agent.agent,
+      threadId: pane.agent.threadId,
+      threadName: pane.agent.threadName,
     });
   }
 
@@ -1283,14 +1291,14 @@ function App() {
   });
 
 
-  // Reset agent-mode when focused session loses all agents
+  // Reset agent-mode when focused session loses all pane rows
   createEffect(() => {
     const data = focusedData();
-    const agents = data?.agents ?? [];
-    if (panelFocus() === "agents" && agents.length === 0) {
+    const rows = data?.paneRows ?? [];
+    if (panelFocus() === "agents" && rows.length === 0) {
       setPanelFocus("sessions");
     }
-    setFocusedAgentIdx((idx) => Math.min(idx, Math.max(0, agents.length - 1)));
+    setFocusedAgentIdx((idx) => Math.min(idx, Math.max(0, rows.length - 1)));
   });
 
   useKeyboard((key) => {
@@ -1367,10 +1375,10 @@ function App() {
       case "l":
         if (panelFocus() === "sessions") {
           const data = focusedData();
-          const agents = data?.agents ?? [];
-          if (agents.length > 0) {
+          const rows = data?.paneRows ?? [];
+          if (rows.length > 0) {
             setPanelFocus("agents");
-            setFocusedAgentIdx((idx) => Math.min(idx, agents.length - 1));
+            setFocusedAgentIdx((idx) => Math.min(idx, rows.length - 1));
           }
         }
         break;
@@ -1485,24 +1493,29 @@ function App() {
                   }}
                   panelFocus={panelFocus}
                   focusedAgentIdx={focusedAgentIdx}
-                  onAgentDismiss={(agent) => {
+                  onPaneDismiss={(pane) => {
+                    if (!pane.agent) return;
                     send({
                       type: "dismiss-agent",
-                      session: session.name,
-                      agent: agent.agent,
-                      threadId: agent.threadId,
+                      session: pane.agent.session,
+                      agent: pane.agent.agent,
+                      threadId: pane.agent.threadId,
                     });
                   }}
-                  onAgentFocus={(agent) => {
-                    appendFileSync("/tmp/tcm-tui-agent-click.log",
-                      `[${new Date().toISOString()}] sending focus-agent-pane session=${session.name} agent=${agent.agent} threadId=${agent.threadId} threadName=${agent.threadName}\n`);
-                    send({
-                      type: "focus-agent-pane",
-                      session: session.name,
-                      agent: agent.agent,
-                      threadId: agent.threadId,
-                      threadName: agent.threadName,
-                    });
+                  onPaneFocus={(pane) => {
+                    if (pane.agent) {
+                      appendFileSync("/tmp/tcm-tui-agent-click.log",
+                        `[${new Date().toISOString()}] sending focus-agent-pane session=${pane.agent.session} agent=${pane.agent.agent} threadId=${pane.agent.threadId} threadName=${pane.agent.threadName}\n`);
+                      send({
+                        type: "focus-agent-pane",
+                        session: pane.agent.session,
+                        agent: pane.agent.agent,
+                        threadId: pane.agent.threadId,
+                        threadName: pane.agent.threadName,
+                      });
+                    } else {
+                      send({ type: "focus-pane", paneId: pane.paneId });
+                    }
                   }}
                 />
               </>
@@ -1535,24 +1548,29 @@ function App() {
                 onSelect={() => switchToSession(data().name)}
                 panelFocus={panelFocus}
                 focusedAgentIdx={focusedAgentIdx}
-                onAgentDismiss={(agent) => {
+                onPaneDismiss={(pane) => {
+                  if (!pane.agent) return;
                   send({
                     type: "dismiss-agent",
-                    session: data().name,
-                    agent: agent.agent,
-                    threadId: agent.threadId,
+                    session: pane.agent.session,
+                    agent: pane.agent.agent,
+                    threadId: pane.agent.threadId,
                   });
                 }}
-                onAgentFocus={(agent) => {
-                  appendFileSync("/tmp/tcm-tui-agent-click.log",
-                    `[${new Date().toISOString()}] sending focus-agent-pane session=${data().name} agent=${agent.agent} threadId=${agent.threadId} threadName=${agent.threadName}\n`);
-                  send({
-                    type: "focus-agent-pane",
-                    session: data().name,
-                    agent: agent.agent,
-                    threadId: agent.threadId,
-                    threadName: agent.threadName,
-                  });
+                onPaneFocus={(pane) => {
+                  if (pane.agent) {
+                    appendFileSync("/tmp/tcm-tui-agent-click.log",
+                      `[${new Date().toISOString()}] sending focus-agent-pane session=${pane.agent.session} agent=${pane.agent.agent} threadId=${pane.agent.threadId} threadName=${pane.agent.threadName}\n`);
+                    send({
+                      type: "focus-agent-pane",
+                      session: pane.agent.session,
+                      agent: pane.agent.agent,
+                      threadId: pane.agent.threadId,
+                      threadName: pane.agent.threadName,
+                    });
+                  } else {
+                    send({ type: "focus-pane", paneId: pane.paneId });
+                  }
                 }}
               />
             )}
@@ -1603,24 +1621,29 @@ function App() {
                   }}
                   panelFocus={panelFocus}
                   focusedAgentIdx={focusedAgentIdx}
-                  onAgentDismiss={(agent) => {
+                  onPaneDismiss={(pane) => {
+                    if (!pane.agent) return;
                     send({
                       type: "dismiss-agent",
-                      session: session.name,
-                      agent: agent.agent,
-                      threadId: agent.threadId,
+                      session: pane.agent.session,
+                      agent: pane.agent.agent,
+                      threadId: pane.agent.threadId,
                     });
                   }}
-                  onAgentFocus={(agent) => {
-                    appendFileSync("/tmp/tcm-tui-agent-click.log",
-                      `[${new Date().toISOString()}] sending focus-agent-pane session=${session.name} agent=${agent.agent} threadId=${agent.threadId} threadName=${agent.threadName}\n`);
-                    send({
-                      type: "focus-agent-pane",
-                      session: session.name,
-                      agent: agent.agent,
-                      threadId: agent.threadId,
-                      threadName: agent.threadName,
-                    });
+                  onPaneFocus={(pane) => {
+                    if (pane.agent) {
+                      appendFileSync("/tmp/tcm-tui-agent-click.log",
+                        `[${new Date().toISOString()}] sending focus-agent-pane session=${pane.agent.session} agent=${pane.agent.agent} threadId=${pane.agent.threadId} threadName=${pane.agent.threadName}\n`);
+                      send({
+                        type: "focus-agent-pane",
+                        session: pane.agent.session,
+                        agent: pane.agent.agent,
+                        threadId: pane.agent.threadId,
+                        threadName: pane.agent.threadName,
+                      });
+                    } else {
+                      send({ type: "focus-pane", paneId: pane.paneId });
+                    }
                   }}
                 />
               </>
@@ -1926,24 +1949,27 @@ function ThemePicker(props: ThemePickerProps) {
   );
 }
 
-interface AgentListItemProps {
-  agent: SessionData["agents"][number];
-  palette: Accessor<Theme["palette"]>;
-  statusColors: Accessor<Theme["status"]>;
+interface PaneRowItemProps {
+  pane: PaneRow;
+  palette: Accessor<ThemePalette>;
   spinIdx: Accessor<number>;
   isKeyboardFocused: boolean;
-  onDismiss: () => void;
   onFocusPane: () => void;
+  onDismiss: () => void;
 }
 
-function AgentListItem(props: AgentListItemProps) {
+function PaneRowItem(props: PaneRowItemProps) {
   const P = () => props.palette();
   const [isDismissHover, setIsDismissHover] = createSignal(false);
   const [isFlash, setIsFlash] = createSignal(false);
 
-  // Resolve the five-label scheme from tracker status + liveness
+  // Resolve the five-label scheme from tracker status + liveness.
+  // When there's no agent attached, treat the row as "ready" (idle visuals
+  // for no-agent panes land in Task 4).
   const label = (): "working" | "waiting" | "ready" | "stopped" | "error" => {
-    const s = props.agent.status;
+    const agent = props.pane.agent;
+    if (!agent) return "ready";
+    const s = agent.status;
     if (s === "running") return "working";
     if (s === "waiting") return "waiting";
     if (s === "error") return "error";
@@ -1953,12 +1979,12 @@ function AgentListItem(props: AgentListItemProps) {
     // undefined means no pane data (e.g. watcher-seeded, server just started)
     //   → for terminal statuses (done/interrupted), assume stopped
     //   → for idle (synthetic cold-start), assume ready
-    if (props.agent.liveness === "alive") return "ready";
+    if (agent.liveness === "alive") return "ready";
     if (s === "done" || s === "interrupted") return "stopped";
     return "ready";
   };
 
-  const isUnseen = () => props.agent.unseen === true;
+  const isUnseen = () => props.pane.agent?.unseen === true;
 
   const icon = () => {
     const l = label();
@@ -1994,7 +2020,7 @@ function AgentListItem(props: AgentListItemProps) {
   return (
     <box flexDirection="column" flexShrink={0} onMouseDown={() => {
       appendFileSync("/tmp/tcm-tui-agent-click.log",
-        `[${new Date().toISOString()}] clicked agent=${props.agent.agent} thread=${props.agent.threadName ?? "?"}\n`);
+        `[${new Date().toISOString()}] clicked agent=${props.pane.agent?.agent ?? "(none)"} thread=${props.pane.agent?.threadName ?? "?"}\n`);
       triggerFlash();
       props.onFocusPane();
     }}>
@@ -2003,7 +2029,7 @@ function AgentListItem(props: AgentListItemProps) {
         backgroundColor={bgColor()}
         paddingRight={1}
       >
-        {/* Row 1: dismiss + agent name + threadId ... unseen badge + status icon */}
+        {/* Row 1: dismiss + window name + threadId ... status icon */}
         <box flexDirection="row">
           <text
             flexShrink={0}
@@ -2023,9 +2049,9 @@ function AgentListItem(props: AgentListItemProps) {
                 ? P().teal
                 : (props.isKeyboardFocused ? P().text : P().subtext1),
               attributes: props.isKeyboardFocused ? BOLD : undefined,
-            }}>{props.agent.windowName ?? props.agent.agent}</span>
-            <Show when={props.agent.threadId}>
-              <span style={{ fg: P().overlay0, attributes: DIM }}>{" #"}{shortThreadId(props.agent.threadId!)}</span>
+            }}>{props.pane.windowName}</span>
+            <Show when={props.pane.agent?.threadId}>
+              <span style={{ fg: P().overlay0, attributes: DIM }}>{" #"}{shortThreadId(props.pane.agent!.threadId!)}</span>
             </Show>
           </text>
           <text flexShrink={0}>
@@ -2033,9 +2059,19 @@ function AgentListItem(props: AgentListItemProps) {
           </text>
         </box>
 
-        {/* Row 2 (tool description / thread name) retired — now surfaced
-            in the standalone ActivityZone, persistently and across focus
-            changes. */}
+        {/* Row 2: dim branch + worktree leaf */}
+        <box flexDirection="row" paddingLeft={2}>
+          <text truncate>
+            <span style={{ fg: P().overlay0, attributes: DIM }}>{TREE_LAST}{" "}</span>
+            <Show when={props.pane.branch}>
+              <span style={{ fg: P().pink, attributes: DIM }}>{props.pane.branch}</span>
+              <span style={{ fg: P().overlay0, attributes: DIM }}>{" @ "}</span>
+            </Show>
+            <span style={{ fg: P().overlay0, attributes: DIM }}>{
+              props.pane.paneCurrentPath.split("/").filter(Boolean).pop() ?? ""
+            }</span>
+          </text>
+        </box>
       </box>
     </box>
   );
@@ -2054,8 +2090,8 @@ interface SessionCardProps {
   onSelect: () => void;
   panelFocus: Accessor<"sessions" | "agents">;
   focusedAgentIdx: Accessor<number>;
-  onAgentDismiss: (agent: SessionData["agents"][number]) => void;
-  onAgentFocus: (agent: SessionData["agents"][number]) => void;
+  onPaneDismiss: (pane: PaneRow) => void;
+  onPaneFocus: (pane: PaneRow) => void;
 }
 
 function SessionCard(props: SessionCardProps) {
@@ -2161,11 +2197,10 @@ function SessionCard(props: SessionCardProps) {
   // --- Expanded content helpers ---
   const dirParts = () => formatDir(props.session.dir);
   const dirMismatch = () => dirParts().project !== props.session.name;
-  const agents = () => props.session.agents ?? [];
   const meta = () => props.session.metadata;
   // Note: status / progress / logs are now rendered in the standalone
   // ActivityZone component beneath the rolodex (per the canonical mockup).
-  // The focused card body stays lean: name + branch + dir + agents only.
+  // The focused card body stays lean: name + dir + pane rows only.
   const progressText = () => {
     const p = meta()?.progress;
     if (!p) return "";
@@ -2209,23 +2244,6 @@ function SessionCard(props: SessionCardProps) {
             </Show>
           </box>
 
-          {/* Row 2: branch + dir-mismatch flag (focused only) */}
-          <Show when={props.session.branch}>
-            <box flexDirection="row">
-              <text truncate>
-                <span style={{ fg: props.isFocused ? P().pink : (props.paneFocused() ? P().overlay0 : P().surface2) }}>
-                  {BRANCH_GLYPH}{" "}{truncBranch()}
-                </span>
-              </text>
-              <box flexGrow={1} />
-              <Show when={props.isFocused && dirMismatch()}>
-                <text flexShrink={0}>
-                  <span style={{ fg: P().overlay0, attributes: DIM }}>{" "}{DIR_MISMATCH_GLYPH}</span>
-                </text>
-              </Show>
-            </box>
-          </Show>
-
           {/* Row 3: metadata summary (status + progress) — only when collapsed */}
           <Show when={!props.isFocused && metaSummary()}>
             <text truncate>
@@ -2238,21 +2256,20 @@ function SessionCard(props: SessionCardProps) {
       {/* Expanded detail — shown inline when focused */}
       <Show when={props.isFocused}>
         <box flexDirection="column" paddingLeft={1}>
-          {/* Directory mismatch is now flagged with DIR_MISMATCH_GLYPH on the
-              branch row above; the inline two-line cwd block has been retired. */}
-          {/* Agent instances */}
-          <Show when={agents().length > 0}>
+          {/* Directory mismatch is now flagged per-row via the branch line;
+              the inline two-line cwd block has been retired. */}
+          {/* Pane rows — one entry per pane in the session */}
+          <Show when={(props.session.paneRows ?? []).length > 0}>
             <box flexDirection="column">
-              <For each={agents()}>
-                {(agent, i) => (
-                  <AgentListItem
-                    agent={agent}
+              <For each={props.session.paneRows ?? []}>
+                {(pane, i) => (
+                  <PaneRowItem
+                    pane={pane}
                     palette={() => P()}
-                    statusColors={props.statusColors}
                     spinIdx={props.spinIdx}
                     isKeyboardFocused={props.panelFocus() === "agents" && i() === props.focusedAgentIdx()}
-                    onDismiss={() => props.onAgentDismiss(agent)}
-                    onFocusPane={() => props.onAgentFocus(agent)}
+                    onFocusPane={() => props.onPaneFocus(pane)}
+                    onDismiss={() => props.onPaneDismiss(pane)}
                   />
                 )}
               </For>
