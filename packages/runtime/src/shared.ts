@@ -2,6 +2,17 @@ import type { AgentEvent } from "./contracts/agent";
 import type { MuxSessionInfo } from "./contracts/mux";
 import type { PartialTheme } from "./themes";
 
+export interface PaneRow {
+  paneId: string;
+  windowId: string;
+  windowName: string;
+  windowActivityFlag: boolean;
+  paneCurrentCommand: string;
+  paneCurrentPath: string;
+  branch?: string;
+  agent?: AgentEvent;
+}
+
 export const SERVER_PORT = 7391;
 export const SERVER_HOST = "127.0.0.1";
 export const PID_FILE = "/tmp/tcm.pid";
@@ -22,6 +33,7 @@ export interface SessionData {
   agentState: AgentEvent | null;
   agents: AgentEvent[];
   eventTimestamps: number[];
+  paneRows: PaneRow[];
   metadata?: SessionMetadata | null;
 }
 

@@ -116,6 +116,7 @@ function makeSession(opts: {
     agentState,
     agents,
     eventTimestamps: [],
+    paneRows: [],
     metadata: opts.metadata,
   };
 }

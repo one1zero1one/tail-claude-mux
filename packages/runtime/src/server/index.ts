@@ -22,6 +22,7 @@ import {
 import {
   type ServerState,
   type SessionData,
+  type PaneRow,
   type ClientCommand,
   type FocusUpdate,
   SERVER_PORT,
@@ -507,6 +508,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
 
   let focusedSession: string | null = null;
   let lastState: ServerState | null = null;
+  let latestPaneScan: ReturnType<typeof scanAllTmuxPanes> = new Map();
   let clientCount = 0;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const clientTtys = new WeakMap<object, string>();
@@ -567,6 +569,23 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         else uptime = `${mins}m`;
       }
 
+      const sessionScan = latestPaneScan.get(name) ?? [];
+      const sessionAgents = tracker.getAgents(name);
+      const agentByPaneId = new Map<string, AgentEvent>();
+      for (const ag of sessionAgents) {
+        if (ag.paneId) agentByPaneId.set(ag.paneId, ag);
+      }
+      const paneRows: PaneRow[] = sessionScan.map((scan) => ({
+        paneId: scan.paneId,
+        windowId: scan.windowId,
+        windowName: scan.windowName,
+        windowActivityFlag: scan.windowActivityFlag,
+        paneCurrentCommand: scan.paneCurrentCommand,
+        paneCurrentPath: scan.paneCurrentPath,
+        branch: getGitInfo(scan.paneCurrentPath).branch || undefined,
+        agent: agentByPaneId.get(scan.paneId),
+      }));
+
       return {
         name,
         createdAt,
@@ -579,8 +598,9 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         windows,
         uptime,
         agentState: tracker.getState(name),
-        agents: tracker.getAgents(name),
+        agents: sessionAgents,
         eventTimestamps: tracker.getEventTimestamps(name),
+        paneRows,
         metadata: metadataStore.get(name),
       };
     });
@@ -1244,31 +1264,40 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     return false;
   }
 
-  /** Scan all panes across all tmux sessions and identify running agents.
-   *  Returns only {agent, paneId} — no threadId, status, or threadName.
-   *  Watchers are the single source of truth for those fields. */
-  function scanAllTmuxPaneAgents(): Map<string, import("../contracts/agent").PanePresenceInput[]> {
-    const result = new Map<string, import("../contracts/agent").PanePresenceInput[]>();
+  type PaneScan = {
+    paneId: string;
+    windowId: string;
+    windowName: string;
+    windowActivityFlag: boolean;
+    paneCurrentCommand: string;
+    paneCurrentPath: string;
+    /** Agent name if process-tree match found, else undefined. */
+    agent?: string;
+  };
+
+  /** Scan every pane across every tmux session. Returns full pane metadata
+   *  plus an optional agent-name annotation when the pane's process tree
+   *  matches a known agent. Sidebar panes are filtered out. */
+  function scanAllTmuxPanes(): Map<string, PaneScan[]> {
+    const result = new Map<string, PaneScan[]>();
 
     const raw = shell([
       "tmux", "list-panes", "-a",
-      "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{window_name}|#{pane_title}",
+      "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{window_id}|#{window_name}|#{window_activity_flag}|#{pane_current_path}",
     ]);
     if (!raw) return result;
 
     const panes = raw.split("\n").filter(Boolean).map((line) => {
-      const idx1 = line.indexOf("|");
-      const idx2 = line.indexOf("|", idx1 + 1);
-      const idx3 = line.indexOf("|", idx2 + 1);
-      const idx4 = line.indexOf("|", idx3 + 1);
-      const idx5 = line.indexOf("|", idx4 + 1);
+      const parts = line.split("|");
       return {
-        session: line.slice(0, idx1),
-        id: line.slice(idx1 + 1, idx2),
-        pid: parseInt(line.slice(idx2 + 1, idx3), 10),
-        cmd: line.slice(idx3 + 1, idx4),
-        windowName: line.slice(idx4 + 1, idx5),
-        title: line.slice(idx5 + 1),
+        session: parts[0] ?? "",
+        paneId: parts[1] ?? "",
+        pid: parseInt(parts[2] ?? "0", 10),
+        cmd: parts[3] ?? "",
+        windowId: parts[4] ?? "",
+        windowName: parts[5] ?? "",
+        windowActivityFlag: parts[6] === "1",
+        paneCurrentPath: parts[7] ?? "",
       };
     });
 
@@ -1277,27 +1306,35 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     for (const { panes: sbPanes } of listSidebarPanesByProvider()) {
       for (const sb of sbPanes) sidebarPaneIds.add(sb.paneId);
     }
-
-    const nonSidebar = panes.filter((p) => !sidebarPaneIds.has(p.id));
+    const nonSidebar = panes.filter((p) => !sidebarPaneIds.has(p.paneId));
     if (nonSidebar.length === 0) return result;
 
-    // Build process tree once for all panes
+    // Build process tree once so we can annotate which panes are running an agent.
     const tree = buildProcessTree();
 
     for (const pane of nonSidebar) {
+      let agent: string | undefined;
       for (const [agentName, patterns] of Object.entries(AGENT_TITLE_PATTERNS)) {
-        // Only use process tree matching — title matching produces false positives
-        // (e.g. an Amp thread named "Detect Claude session names" matches "claude")
-        if (!matchProcessTreeFast(pane.pid, patterns, tree)) continue;
-
-        let sessionAgents = result.get(pane.session);
-        if (!sessionAgents) {
-          sessionAgents = [];
-          result.set(pane.session, sessionAgents);
+        if (matchProcessTreeFast(pane.pid, patterns, tree)) {
+          agent = agentName;
+          break;
         }
-        sessionAgents.push({ agent: agentName, paneId: pane.id, windowName: pane.windowName });
-        break; // One agent per pane — first match wins (ordered so parents precede child tools)
       }
+
+      let sessionPanes = result.get(pane.session);
+      if (!sessionPanes) {
+        sessionPanes = [];
+        result.set(pane.session, sessionPanes);
+      }
+      sessionPanes.push({
+        paneId: pane.paneId,
+        windowId: pane.windowId,
+        windowName: pane.windowName,
+        windowActivityFlag: pane.windowActivityFlag,
+        paneCurrentCommand: pane.cmd,
+        paneCurrentPath: pane.paneCurrentPath,
+        agent,
+      });
     }
 
     return result;
@@ -1313,18 +1350,24 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
       return;
     }
 
-    const nextBySession = scanAllTmuxPaneAgents();
-    let changed = false;
+    const allScans = scanAllTmuxPanes();
 
-    // Apply presence for sessions that have pane agents
-    for (const [session, paneAgents] of nextBySession) {
-      if (tracker.applyPanePresence(session, paneAgents)) changed = true;
+    // Stash latest scan for broadcastStateImmediate to build paneRows.
+    latestPaneScan = allScans;
+
+    // Tracker still only needs agent-running panes.
+    let changed = false;
+    for (const [session, scans] of allScans) {
+      const presence = scans
+        .filter((s) => s.agent)
+        .map((s) => ({ agent: s.agent!, paneId: s.paneId, windowName: s.windowName }));
+      if (tracker.applyPanePresence(session, presence)) changed = true;
     }
 
     // For sessions NOT in the scan, apply empty presence to transition alive → exited
     if (lastState) {
       for (const s of lastState.sessions) {
-        if (!nextBySession.has(s.name)) {
+        if (!allScans.has(s.name)) {
           if (tracker.applyPanePresence(s.name, [])) changed = true;
         }
       }

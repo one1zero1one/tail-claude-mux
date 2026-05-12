@@ -75,6 +75,7 @@ function makeSession(overrides: Partial<SessionData> = {}): SessionData {
     agentState: null,
     agents: [],
     eventTimestamps: [],
+    paneRows: [],
     ...overrides,
   };
 }

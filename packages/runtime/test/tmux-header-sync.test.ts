@@ -60,6 +60,7 @@ function makeSession(name: string, agents: AgentEvent[]): SessionData {
     agentState: agents[0] ?? null,
     agents,
     eventTimestamps: [],
+    paneRows: [],
     metadata: null,
   };
 }
