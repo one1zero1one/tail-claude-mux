@@ -61,6 +61,12 @@ bind_global_index_keys() {
 tmux set-environment -g TCM_DIR "$CURRENT_DIR"
 tmux set-environment -g TCM_WIDTH "$WIDTH"
 
+# Enable per-window activity flags so the sidebar can surface "something
+# happened in another window of this session" without needing the visual
+# bell. Idempotent.
+tmux set-option -g monitor-activity on 2>/dev/null || true
+tmux set-option -g visual-activity off 2>/dev/null || true
+
 # --- Bootstrap: tie bun-server lifetime to tmux-server lifetime (1:1) ---
 #
 # Why unconditional: the bun server holds in-memory caches (palette diff,

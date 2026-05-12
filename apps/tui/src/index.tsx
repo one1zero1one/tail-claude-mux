@@ -48,6 +48,7 @@ import {
   ACTIVITY_VERB_ERROR,
   ACTIVITY_VERB_MISC,
   TREE_LAST,
+  TREE_MID,
 } from "./vocab";
 import { tier } from "./tiers";
 import { classifyVerb, type Verb } from "./classify";
@@ -951,6 +952,9 @@ function App() {
         if (parent) h++;
       }
 
+      const groupedByWindow = new Map<string, true>();
+      for (const p of (session.paneRows ?? [])) groupedByWindow.set(p.windowId, true);
+      h += groupedByWindow.size; // 1 row per window header
       for (const _pane of (session.paneRows ?? [])) {
         h += 2; // row 1 (name + status) + row 2 (branch line)
       }
@@ -1950,8 +1954,27 @@ function ThemePicker(props: ThemePickerProps) {
   );
 }
 
+function WindowGroupHeader(props: {
+  windowName: string;
+  windowActivityFlag: boolean;
+  palette: Accessor<ThemePalette>;
+}) {
+  const P = () => props.palette();
+  return (
+    <box flexDirection="row">
+      <text truncate>
+        <span style={{ fg: P().subtext1 }}>{"▸ "}{props.windowName}</span>
+        <Show when={props.windowActivityFlag}>
+          <span style={{ fg: P().teal, attributes: DIM }}>{"  ●"}</span>
+        </Show>
+      </text>
+    </box>
+  );
+}
+
 interface PaneRowItemProps {
   pane: PaneRow;
+  treeTick: "mid" | "last";
   palette: Accessor<ThemePalette>;
   spinIdx: Accessor<number>;
   isKeyboardFocused: boolean;
@@ -2069,7 +2092,7 @@ function PaneRowItem(props: PaneRowItemProps) {
         {/* Row 2: dim branch + worktree leaf */}
         <box flexDirection="row" paddingLeft={2}>
           <text truncate>
-            <span style={{ fg: P().overlay0, attributes: DIM }}>{TREE_LAST}{" "}</span>
+            <span style={{ fg: P().overlay0, attributes: DIM }}>{props.treeTick === "last" ? TREE_LAST : TREE_MID}{" "}</span>
             <Show when={props.pane.branch}>
               <span style={{ fg: P().pink, attributes: DIM }}>{props.pane.branch}</span>
               <span style={{ fg: P().overlay0, attributes: DIM }}>{" @ "}</span>
@@ -2216,6 +2239,27 @@ function SessionCard(props: SessionCardProps) {
     return "";
   };
 
+  // Group paneRows by windowId, preserving insertion order (= tmux scan order
+  // = window-index ascending) so flatIndex aligns with the original flat array.
+  const windowGroups = createMemo(() => {
+    const groups = new Map<string, PaneRow[]>();
+    for (const row of props.session.paneRows ?? []) {
+      let arr = groups.get(row.windowId);
+      if (!arr) { arr = []; groups.set(row.windowId, arr); }
+      arr.push(row);
+    }
+    return Array.from(groups.entries());
+  });
+
+  const flatIndex = (winId: string, paneIdxInGroup: number): number => {
+    let acc = 0;
+    for (const [w, arr] of windowGroups()) {
+      if (w === winId) return acc + paneIdxInGroup;
+      acc += arr.length;
+    }
+    return -1;
+  };
+
   // ▎ current-session left bar retired in render: bold name + row position
   // already signal current state.
 
@@ -2265,19 +2309,31 @@ function SessionCard(props: SessionCardProps) {
         <box flexDirection="column" paddingLeft={1}>
           {/* Directory mismatch is now flagged per-row via the branch line;
               the inline two-line cwd block has been retired. */}
-          {/* Pane rows — one entry per pane in the session */}
+          {/* Pane rows — grouped by window */}
           <Show when={(props.session.paneRows ?? []).length > 0}>
             <box flexDirection="column">
-              <For each={props.session.paneRows ?? []}>
-                {(pane, i) => (
-                  <PaneRowItem
-                    pane={pane}
-                    palette={() => P()}
-                    spinIdx={props.spinIdx}
-                    isKeyboardFocused={props.panelFocus() === "agents" && i() === props.focusedAgentIdx()}
-                    onFocusPane={() => props.onPaneFocus(pane)}
-                    onDismiss={() => props.onPaneDismiss(pane)}
-                  />
+              <For each={windowGroups()}>
+                {([windowId, panesInWindow]) => (
+                  <box flexDirection="column">
+                    <WindowGroupHeader
+                      windowName={panesInWindow[0]!.windowName}
+                      windowActivityFlag={panesInWindow.some((p) => p.windowActivityFlag)}
+                      palette={() => P()}
+                    />
+                    <For each={panesInWindow}>
+                      {(pane, i) => (
+                        <PaneRowItem
+                          pane={pane}
+                          treeTick={i() === panesInWindow.length - 1 ? "last" : "mid"}
+                          palette={() => P()}
+                          spinIdx={props.spinIdx}
+                          isKeyboardFocused={props.panelFocus() === "agents" && flatIndex(windowId, i()) === props.focusedAgentIdx()}
+                          onFocusPane={() => props.onPaneFocus(pane)}
+                          onDismiss={() => props.onPaneDismiss(pane)}
+                        />
+                      )}
+                    </For>
+                  </box>
                 )}
               </For>
             </box>
