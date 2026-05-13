@@ -31,6 +31,7 @@ export const SEV_READY = "\u{F05E1}";     // nf-md-check-circle-outline
 export const SEV_STOPPED = "\u{F0666}";   // nf-md-stop-circle (was U+F0667 stop_circle_outline)
 export const SEV_ERROR = "\u{F0028}";     // nf-md-alert-circle
 export const SEV_IDLE_DOT = "·";          // dim centre-dot for agentless / idle panes
+export const SEV_SHELL_RUNNING = "\u{F070B}"; // nf-md-rhombus — foreground command in a shell pane
 
 // ── Identity glyphs (right gutter) ──
 const ID_CLAUDE_CODE = "\u{100CC0}"; // Clawd, vendored at fonts/Clawd.ttf
