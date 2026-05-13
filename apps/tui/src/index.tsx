@@ -1877,13 +1877,14 @@ function WindowGroupHeader(props: {
   };
 
   const fg = () => {
-    if (props.windowActive || props.windowActivityFlag) return P().crust;
+    if (props.windowActive) return P().crust;
+    if (props.windowActivityFlag) return P().crust;
     return P().subtext1;
   };
 
   return (
     <box flexDirection="row">
-      <text>
+      <text truncate>
         <span style={{ fg: fg(), bg: bg() }}>{` ${props.windowName} `}</span>
       </text>
     </box>
@@ -2210,7 +2211,7 @@ function SessionCard(props: SessionCardProps) {
                   <box flexDirection="column">
                     <WindowGroupHeader
                       windowName={panesInWindow[0]!.windowName}
-                      windowActive={panesInWindow.some((p) => p.windowActive)}
+                      windowActive={panesInWindow[0]!.windowActive}
                       windowActivityFlag={panesInWindow.some((p) => p.windowActivityFlag)}
                       palette={() => P()}
                     />
