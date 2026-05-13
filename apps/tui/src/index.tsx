@@ -863,8 +863,7 @@ function App() {
   // tcm patch: lock focused row to this TUI's own session so sidebars on
   // multi-monitor / Ghostty-per-session setups don't sync cursors with each
   // other. setFocusedSession silently rejects updates that try to move focus
-  // off the local session. Cursor nav (j/k) and Enter-to-switch become
-  // no-ops via the early returns in moveLocalFocus / switchToSession below.
+  // off the local session.
   const LOCK_TO_LOCAL = true;
   const setFocusedSession = (name: string | null) => {
     if (LOCK_TO_LOCAL && startupSessionName && name !== startupSessionName) return;
@@ -885,14 +884,9 @@ function App() {
   // card is pinned at the vertical centre of the zone; the viewport slides
   // over the tape as the focus index changes. Sessions appear in stable,
   // predictable positions relative to each other — the visible layout
-  // never rotates.
-  //
-  // `j`/`k` navigation wraps modularly (see moveLocalFocus) so a single
-  // press at either end snaps to the opposite end. That wrap is a
-  // *navigation* behaviour; the tape itself does not wrap visually — at the
-  // boundaries the `before` / `after` halves shrink, leaving empty space
-  // above or below the focused card. The chevron separators above and below
-  // the focused card stay always-visible regardless.
+  // never rotates. At the boundaries the `before` / `after` halves shrink,
+  // leaving empty space above or below the focused card. The chevron
+  // separators above and below the focused card stay always-visible.
   // (The earlier wheel/rotation model disoriented users in live QA, hence
   // this slide-up/down approach.)
   const rolodex = createMemo(() => {
