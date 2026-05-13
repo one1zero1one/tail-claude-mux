@@ -1034,22 +1034,9 @@ function App() {
     const rows = data?.paneRows ?? [];
     const pane = rows[focusedAgentIdx()];
     if (!pane || !data) return;
-    const logLine = pane.agent
-      ? `keyboard focus-agent-pane session=${data.name} agent=${pane.agent.agent} threadId=${pane.agent.threadId} threadName=${pane.agent.threadName}`
-      : `keyboard focus-pane paneId=${pane.paneId}`;
     appendFileSync("/tmp/tcm-tui-agent-click.log",
-      `[${new Date().toISOString()}] ${logLine}\n`);
-    if (pane.agent) {
-      send({
-        type: "focus-agent-pane",
-        session: data.name,
-        agent: pane.agent.agent,
-        threadId: pane.agent.threadId,
-        threadName: pane.agent.threadName,
-      });
-    } else {
-      send({ type: "focus-pane", paneId: pane.paneId });
-    }
+      `[${new Date().toISOString()}] keyboard focus-pane paneId=${pane.paneId} agent=${pane.agent?.agent ?? "(none)"}\n`);
+    send({ type: "focus-pane", paneId: pane.paneId });
   }
 
   function dismissFocusedAgent() {
@@ -1508,19 +1495,9 @@ function App() {
                     });
                   }}
                   onPaneFocus={(pane) => {
-                    if (pane.agent) {
-                      appendFileSync("/tmp/tcm-tui-agent-click.log",
-                        `[${new Date().toISOString()}] sending focus-agent-pane session=${pane.agent.session} agent=${pane.agent.agent} threadId=${pane.agent.threadId} threadName=${pane.agent.threadName}\n`);
-                      send({
-                        type: "focus-agent-pane",
-                        session: pane.agent.session,
-                        agent: pane.agent.agent,
-                        threadId: pane.agent.threadId,
-                        threadName: pane.agent.threadName,
-                      });
-                    } else {
-                      send({ type: "focus-pane", paneId: pane.paneId });
-                    }
+                    appendFileSync("/tmp/tcm-tui-agent-click.log",
+                      `[${new Date().toISOString()}] sending focus-pane paneId=${pane.paneId} agent=${pane.agent?.agent ?? "(none)"}\n`);
+                    send({ type: "focus-pane", paneId: pane.paneId });
                   }}
                 />
               </>
@@ -1563,19 +1540,9 @@ function App() {
                   });
                 }}
                 onPaneFocus={(pane) => {
-                  if (pane.agent) {
-                    appendFileSync("/tmp/tcm-tui-agent-click.log",
-                      `[${new Date().toISOString()}] sending focus-agent-pane session=${pane.agent.session} agent=${pane.agent.agent} threadId=${pane.agent.threadId} threadName=${pane.agent.threadName}\n`);
-                    send({
-                      type: "focus-agent-pane",
-                      session: pane.agent.session,
-                      agent: pane.agent.agent,
-                      threadId: pane.agent.threadId,
-                      threadName: pane.agent.threadName,
-                    });
-                  } else {
-                    send({ type: "focus-pane", paneId: pane.paneId });
-                  }
+                  appendFileSync("/tmp/tcm-tui-agent-click.log",
+                    `[${new Date().toISOString()}] sending focus-pane paneId=${pane.paneId} agent=${pane.agent?.agent ?? "(none)"}\n`);
+                  send({ type: "focus-pane", paneId: pane.paneId });
                 }}
               />
             )}
@@ -1636,19 +1603,9 @@ function App() {
                     });
                   }}
                   onPaneFocus={(pane) => {
-                    if (pane.agent) {
-                      appendFileSync("/tmp/tcm-tui-agent-click.log",
-                        `[${new Date().toISOString()}] sending focus-agent-pane session=${pane.agent.session} agent=${pane.agent.agent} threadId=${pane.agent.threadId} threadName=${pane.agent.threadName}\n`);
-                      send({
-                        type: "focus-agent-pane",
-                        session: pane.agent.session,
-                        agent: pane.agent.agent,
-                        threadId: pane.agent.threadId,
-                        threadName: pane.agent.threadName,
-                      });
-                    } else {
-                      send({ type: "focus-pane", paneId: pane.paneId });
-                    }
+                    appendFileSync("/tmp/tcm-tui-agent-click.log",
+                      `[${new Date().toISOString()}] sending focus-pane paneId=${pane.paneId} agent=${pane.agent?.agent ?? "(none)"}\n`);
+                    send({ type: "focus-pane", paneId: pane.paneId });
                   }}
                 />
               </>
@@ -1963,10 +1920,7 @@ function WindowGroupHeader(props: {
   return (
     <box flexDirection="row">
       <text truncate>
-        <span style={{ fg: P().subtext1 }}>{"▸ "}{props.windowName}</span>
-        <Show when={props.windowActivityFlag}>
-          <span style={{ fg: P().teal, attributes: DIM }}>{"  ●"}</span>
-        </Show>
+        <span style={{ fg: P().subtext1 }}>{props.windowName}</span>
       </text>
     </box>
   );
@@ -2071,6 +2025,9 @@ function PaneRowItem(props: PaneRowItemProps) {
             </text>
           </Show>
           <text flexGrow={1} truncate>
+            <span style={{ fg: P().overlay0, attributes: DIM }}>{
+              props.pane.agent ? "cc " : "sh "
+            }</span>
             <span style={{
               fg: isUnseen()
                 ? P().teal
@@ -2078,44 +2035,18 @@ function PaneRowItem(props: PaneRowItemProps) {
               attributes: props.isKeyboardFocused ? BOLD : undefined,
             }}>{
               (() => {
-                const t = props.pane.agent?.threadName;
-                if (!t) return "";
-                return t.length > 20 ? t.slice(0, 19) + "…" : t;
+                const raw = props.pane.agent
+                  ? (props.pane.agent.threadName || props.pane.agent.agent)
+                  : props.pane.paneCurrentCommand;
+                return raw.length > 18 ? raw.slice(0, 17) + "…" : raw;
               })()
             }</span>
-            <Show when={props.pane.agent?.threadId}
-                  fallback={
-                    <span style={{ fg: P().overlay0, attributes: DIM }}>{" ("}{
-                      props.pane.agent ? props.pane.agent.agent : props.pane.paneCurrentCommand
-                    }{")"}</span>
-                  }>
-              <span style={{ fg: P().overlay0, attributes: DIM }}>{" #"}{shortThreadId(props.pane.agent!.threadId!)}</span>
+            <Show when={props.pane.agent?.threadId}>
+              <span style={{ fg: P().overlay0, attributes: DIM }}>{"  #"}{shortThreadId(props.pane.agent!.threadId!)}</span>
             </Show>
           </text>
           <text flexShrink={0}>
             <span style={{ fg: color() }}>{" "}{icon()}</span>
-          </text>
-        </box>
-
-        {/* Row 2: dim branch + worktree leaf */}
-        <box flexDirection="row" paddingLeft={2}>
-          <text truncate>
-            <span style={{ fg: P().overlay0, attributes: DIM }}>{props.treeTick === "last" ? TREE_LAST : TREE_MID}{" "}</span>
-            <Show when={props.pane.branch}>
-              <span style={{ fg: P().pink, attributes: DIM }}>{
-                (() => {
-                  const b = props.pane.branch!;
-                  return b.length > 14 ? b.slice(0, 13) + "…" : b;
-                })()
-              }</span>
-              <span style={{ fg: P().overlay0, attributes: DIM }}>{" @ "}</span>
-            </Show>
-            <span style={{ fg: P().overlay0, attributes: DIM }}>{
-              (() => {
-                const leaf = props.pane.paneCurrentPath.split("/").filter(Boolean).pop() ?? "";
-                return leaf.length > 14 ? leaf.slice(0, 13) + "…" : leaf;
-              })()
-            }</span>
           </text>
         </box>
       </box>
@@ -2295,9 +2226,7 @@ function SessionCard(props: SessionCardProps) {
               <span style={{ fg: nameColor(), attributes: props.isCurrent ? BOLD : undefined }}>
                 {truncName()}
               </span>
-              <Show when={agentBadge()}>
-                <span style={{ fg: agentBadgeColor() }}>{" "}{agentBadge()}</span>
-              </Show>
+              {/* agent-count badge retired — pane rows below carry the cardinality */}
             </text>
             <box flexGrow={1} />
             {/* Unseen marker is now color-only on the name (see nameColor()). */}
@@ -2331,11 +2260,13 @@ function SessionCard(props: SessionCardProps) {
               <For each={windowGroups()}>
                 {([windowId, panesInWindow]) => (
                   <box flexDirection="column">
-                    <WindowGroupHeader
-                      windowName={panesInWindow[0]!.windowName}
-                      windowActivityFlag={panesInWindow.some((p) => p.windowActivityFlag)}
-                      palette={() => P()}
-                    />
+                    <Show when={panesInWindow[0]!.windowName !== props.session.name}>
+                      <WindowGroupHeader
+                        windowName={panesInWindow[0]!.windowName}
+                        windowActivityFlag={panesInWindow.some((p) => p.windowActivityFlag)}
+                        palette={() => P()}
+                      />
+                    </Show>
                     <For each={panesInWindow}>
                       {(pane, i) => (
                         <PaneRowItem

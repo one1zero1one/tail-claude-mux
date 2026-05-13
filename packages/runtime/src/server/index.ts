@@ -1495,10 +1495,14 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         log("handleCommand", "focus-agent-pane received", { session: cmd.session, agent: cmd.agent, threadId: cmd.threadId, threadName: cmd.threadName });
         focusAgentPane(cmd.session, cmd.agent, cmd.threadId, cmd.threadName);
         break;
-      case "focus-pane":
+      case "focus-pane": {
         log("handleCommand", "focus-pane received", { paneId: cmd.paneId });
-        Bun.spawnSync(["tmux", "select-pane", "-t", cmd.paneId]);
+        // select-pane alone won't cross windows — switch to the pane's window first.
+        const windowId = shell(["tmux", "display-message", "-t", cmd.paneId, "-p", "#{window_id}"]);
+        if (windowId) shell(["tmux", "select-window", "-t", windowId.trim()]);
+        shell(["tmux", "select-pane", "-t", cmd.paneId]);
         break;
+      }
       case "kill-agent-pane":
         log("handleCommand", "kill-agent-pane received", { session: cmd.session, agent: cmd.agent, threadId: cmd.threadId, threadName: cmd.threadName });
         killAgentPane(cmd.session, cmd.agent, cmd.threadId, cmd.threadName);
