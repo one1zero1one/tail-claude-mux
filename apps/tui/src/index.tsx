@@ -1864,14 +1864,27 @@ function ThemePicker(props: ThemePickerProps) {
 
 function WindowGroupHeader(props: {
   windowName: string;
+  windowActive: boolean;
   windowActivityFlag: boolean;
   palette: Accessor<ThemePalette>;
 }) {
   const P = () => props.palette();
+
+  const bg = () => {
+    if (props.windowActive) return P().teal;
+    if (props.windowActivityFlag) return P().yellow;
+    return "transparent";
+  };
+
+  const fg = () => {
+    if (props.windowActive || props.windowActivityFlag) return P().crust;
+    return P().subtext1;
+  };
+
   return (
     <box flexDirection="row">
-      <text truncate>
-        <span style={{ fg: P().subtext1 }}>{props.windowName}</span>
+      <text>
+        <span style={{ fg: fg(), bg: bg() }}>{` ${props.windowName} `}</span>
       </text>
     </box>
   );
@@ -2195,13 +2208,12 @@ function SessionCard(props: SessionCardProps) {
               <For each={windowGroups()}>
                 {([windowId, panesInWindow]) => (
                   <box flexDirection="column">
-                    <Show when={panesInWindow[0]!.windowName !== props.session.name}>
-                      <WindowGroupHeader
-                        windowName={panesInWindow[0]!.windowName}
-                        windowActivityFlag={panesInWindow.some((p) => p.windowActivityFlag)}
-                        palette={() => P()}
-                      />
-                    </Show>
+                    <WindowGroupHeader
+                      windowName={panesInWindow[0]!.windowName}
+                      windowActive={panesInWindow.some((p) => p.windowActive)}
+                      windowActivityFlag={panesInWindow.some((p) => p.windowActivityFlag)}
+                      palette={() => P()}
+                    />
                     <For each={panesInWindow}>
                       {(pane, i) => (
                         <PaneRowItem
