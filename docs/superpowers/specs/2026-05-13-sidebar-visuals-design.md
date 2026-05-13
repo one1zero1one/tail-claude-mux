@@ -35,21 +35,21 @@ After the pane-tree feature shipped, several visual decisions need to settle:
 
 ## Status vocabulary
 
-Each pane row begins with one status glyph that carries fg color. The glyph is computed from `pane.agent` and tmux flags. There is no trailing duplicate.
+Each pane row begins with one status glyph that carries fg color. The glyph is computed from `pane.agent`. There is no trailing duplicate.
 
 | State | Glyph | Color | Derivation |
 |---|---|---|---|
 | Claude running | `⠋` (spinner) | blue | `agent.status === "running"` |
 | Claude waiting on permission | `?` | yellow | `agent.status === "waiting"` |
 | Claude done at prompt | `✓` | green | `agent.status === "done"`, liveness=alive |
-| Claude needs your eyes (unseen) | `!` | teal | `agent.unseen === true` |
 | Claude errored | `✕` | red | `agent.status === "error"` |
 | Claude stopped / exited | `·` | overlay0 dim | terminal status with liveness=exited |
 | Shell, foreground command | `◆` | teal | no agent, `paneCurrentCommand !== "zsh"/"bash"/"fish"` |
 | Shell, idle | `·` | overlay0 dim | no agent, default shell foreground |
-| Tmux activity on pane | `↑` | peach | tmux's `#{window_activity_flag}` on the pane's window AND no agent override |
 
-Precedence when multiple apply: agent state wins over activity flag. The activity glyph is only used on agentless rows that aren't running a foreground non-shell command — i.e. a quiet shell pane that received output while the user looked elsewhere.
+**Unseen is a tint, not a shape.** When `agent.unseen === true`, the glyph's color shifts to `palette.teal` regardless of which shape it carries. The existing teal-tint on the name (today at `index.tsx:2007`) extends to the glyph. No separate "unseen" glyph; no precedence rule.
+
+**Pane-level activity glyph is dropped.** The window header's yellow pill already signals "activity since you last looked" at the window level; a per-pane `↑` glyph duplicates the same signal one line down. Quiet shell panes simply show `·`.
 
 ## Row layout
 
@@ -129,31 +129,37 @@ Click anywhere on a pane row activates it (same as `↩`). No hover-revealed act
 
 ## Wire model
 
-The `PaneRow` interface gains no new fields. All new state derives from existing fields:
+One new field on `PaneRow` (`packages/runtime/src/shared.ts`):
 
-- Status glyph: from `pane.agent.status`, `pane.agent.unseen`, `pane.agent.liveness`, `pane.windowActivityFlag`, `pane.paneCurrentCommand`.
-- Window-header color: from `pane.windowActivityFlag` (already on PaneRow) + a new `windowActive: boolean` (server-side `#{window_active}` add to the existing list-panes format).
+- `windowActive: boolean` — sourced from tmux `#{window_active}`, added to the existing list-panes format in `scanAllTmuxPanes` (`packages/runtime/src/server/index.ts:1286`).
 
-`windowActive` is the only new field. One bit per pane. Trivial to wire through.
+Everything else derives from fields already on `PaneRow`:
+
+- Status glyph: from `pane.agent.status`, `pane.agent.unseen`, `pane.agent.liveness`, `pane.paneCurrentCommand`.
+- Window-header color: from `windowActive` (new) + `windowActivityFlag` (existing).
 
 ## Implementation outline
 
 The plan will split this into discrete commits. Rough shape:
 
-1. **Server: add `windowActive` to `PaneRow`** (one tmux format field, one type field).
-2. **TUI: status glyph vocabulary** — extract into a single `paneStatus()` function returning `{ glyph, color }`. Apply at the head of each row.
-3. **TUI: row layout** — drop the trailing status, drop the dismiss `✕`, drop the `#hash`, drop the `cc/sh` color treatment (keep dim).
-4. **TUI: window header coloring** — teal for active, yellow for activity, plain otherwise. Remove the hide-when-same-name `Show`.
-5. **TUI: indent pane rows** — 2-col leading pad under each window.
-6. **TUI: keybinding cleanup** — strip the dropped branches from `handleKeyDown`, remove `panelFocus` signal + uses, update help modal text, update footer hint.
+1. **Server: add `windowActive` to `PaneRow`** — extend the `#F`-formatted list-panes call in `scanAllTmuxPanes` with `#{window_active}` and append a `windowActive: boolean` field to the `PaneRow` interface in `packages/runtime/src/shared.ts`. Default to `false` if the format is missing.
+2. **TUI: status glyph vocabulary** — extract a single `paneStatus(pane)` helper returning `{ glyph, color }` that implements the table in *Status vocabulary*. Apply at the head of each row in `PaneRowItem`.
+3. **TUI: row layout** — drop the trailing status icon, drop the leading dismiss `✕`, drop the `#hash` tail. Keep the dim `cc`/`sh` two-char prefix as-is.
+4. **TUI: window header coloring** — set bg/fg on `WindowGroupHeader` from `windowActive`/`windowActivityFlag`. Remove the `Show when={windowName !== sessionName}` guard that currently hides the header when names match.
+5. **TUI: indent pane rows** — add a 2-col leading pad to `PaneRowItem` so rows nest under their window header.
+6. **TUI: collapse keybindings + drop dual-panel model** — in `apps/tui/src/index.tsx`:
+   - Strip the dropped branches from `handleKeyDown` (`tab`/`⇧tab`, `1`-`9`, `n`/`c`, `u`, `d`, `x`, `t`, `=`, `⌥↑↓`, `h`/`l`).
+   - Delete the `panelFocus` signal, the `createEffect` that resets it (around line 1290), the `panelFocus` prop on all three `SessionCard` call sites (≈1486, 1531, 1594), the `isKeyboardFocused` derivation that reads it (≈2277), and the footer-hint branch that gates on it (≈1634).
+   - Update the help modal text and footer hint to: `↩ focus · r refresh · ? help`.
 
-Each step is one commit, types and tests pass at each step, manual visual smoke after the visible ones.
+Each step is one commit; types and tests pass at each step; manual visual smoke after the visible ones.
+
+Note on uncommitted working-tree edits: the morning's `apps/tui/src/index.tsx` changes added the `cc`/`sh` prefix and the hide-when-same-name guard. The prefix stays. The hide-when-same-name guard is reverted by step 4. Two other uncommitted edits (count-badge drop, cross-tab `focus-pane` bypass) are unrelated to this redesign and get committed first as a prep commit so this redesign starts from a clean tree.
 
 ## Risks
 
-- Status glyph precedence is subtle. If `agent.unseen` and `agent.status === "running"` are both true, which wins? Decision: `unseen` overrides only terminal statuses (`done`/`error`/`interrupted`/`waiting`); a running thread keeps its spinner. Codify in the vocabulary table.
 - Removing the panel-focus model changes keyboard navigation flow on the (no-lock-to-local) cold-boot screen. Acceptable — lock-to-local is the default and the working assumption.
-- The `windowActive` field is a snapshot from the pane scan tick (default 3s). When the user switches tmux windows, the colored pill follows on the next tick. If feels stale, we can wire a `client-session-changed` hook → forced refresh; out of scope here.
+- The `windowActive` field is a snapshot from the pane scan tick (default 3s). When the user switches tmux windows, the colored pill follows on the next tick. If it feels stale, we can wire a `client-session-changed` hook → forced refresh; out of scope here.
 
 ## Testing
 
