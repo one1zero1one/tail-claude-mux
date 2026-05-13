@@ -3,7 +3,7 @@ import { appendFileSync } from "fs";
 import { createSignal, createEffect, onCleanup, onMount, batch, For, Show, createMemo, type Accessor } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { useKeyboard, useRenderer } from "@opentui/solid";
-import { TextAttributes, type InputRenderable, type KeyEvent } from "@opentui/core";
+import { TextAttributes } from "@opentui/core";
 
 import { ensureServer } from "@tcm/runtime";
 import {
@@ -16,7 +16,6 @@ import {
   type MetadataTone,
   SERVER_PORT,
   SERVER_HOST,
-  BUILTIN_THEMES,
   resolveTheme,
 } from "@tcm/runtime";
 import { TmuxClient } from "@tcm/mux-tmux";
@@ -72,8 +71,6 @@ const muxCtx = detectMuxContext();
 const SPINNERS = SEV_WORKING_SPINNER;
 const BOLD = TextAttributes.BOLD;
 const DIM = TextAttributes.DIM;
-const THEME_NAMES = Object.keys(BUILTIN_THEMES);
-
 const TONE_ICONS: Record<MetadataTone, string> = {
   neutral: "·",
   info: "ℹ",
@@ -116,21 +113,6 @@ function sanitizeThreadName(raw: string): string {
  *  head. */
 function shortThreadId(id: string): string {
   return id.length <= 4 ? id : id.slice(-4);
-}
-
-/** Build an FZF_DEFAULT_OPTS --color string from an tcm palette.
- *  fzf doesn't understand the literal string "transparent" — it wants -1 to
- *  mean "use terminal default", which is how we render transparency. */
-function paletteToFzfColors(p: ThemePalette): string {
-  const c = (v: string) => (v === "transparent" ? "-1" : v);
-  return [
-    `--color=fg:${c(p.text)},bg:${c(p.base)},hl:${c(p.blue)}`,
-    `--color=fg+:${c(p.surface2)},bg+:${c(p.surface0)},hl+:${c(p.blue)}`,
-    `--color=info:${c(p.blue)},prompt:${c(p.blue)},pointer:${c(p.blue)}`,
-    `--color=marker:${c(p.green)},spinner:${c(p.blue)},header:${c(p.overlay0)}`,
-    `--color=border:${c(p.surface2)},gutter:${c(p.base)}`,
-    `--color=query:${c(p.text)},disabled:${c(p.overlay0)}`,
-  ].join(" ");
 }
 
 /** Refocus the main (non-sidebar) pane after TUI capability detection finishes.
@@ -862,9 +844,7 @@ function App() {
   const [focusedAgentIdx, setFocusedAgentIdx] = createSignal(0);
 
   // --- Modal state ---
-  const [modal, setModal] = createSignal<"none" | "theme-picker" | "confirm-kill" | "help">("none");
-  const [killTarget, setKillTarget] = createSignal<string | null>(null);
-  let themeBeforePreview: Theme | null = null;
+  const [modal, setModal] = createSignal<"none" | "help">("none");
 
   // --- Flash message (brief feedback after actions like refresh) ---
   const [flashMessage, setFlashMessage] = createSignal<string | null>(null);
@@ -1004,23 +984,6 @@ function App() {
     }
   }
 
-  function moveLocalFocus(delta: -1 | 1) {
-    // tcm patch: cursor is locked to local session — j/k do nothing.
-    if (LOCK_TO_LOCAL) return;
-    const list = sessions;
-    if (list.length === 0) return;
-
-    const current = focusedSession();
-    const currentIdx = Math.max(0, list.findIndex((s) => s.name === current));
-    const nextIdx = (currentIdx + delta + list.length) % list.length;
-    const next = list[nextIdx]?.name ?? null;
-
-    if (!next || next === current) return;
-
-    setFocusedSession(next);
-    send({ type: "focus-session", name: next });
-  }
-
   function moveAgentFocus(delta: -1 | 1) {
     const data = focusedData();
     const rows = data?.paneRows ?? [];
@@ -1038,44 +1001,6 @@ function App() {
     appendFileSync("/tmp/tcm-tui-agent-click.log",
       `[${new Date().toISOString()}] keyboard focus-pane paneId=${pane.paneId} agent=${pane.agent?.agent ?? "(none)"}\n`);
     send({ type: "focus-pane", paneId: pane.paneId });
-  }
-
-  function killFocusedAgentPane() {
-    const data = focusedData();
-    const rows = data?.paneRows ?? [];
-    const pane = rows[focusedAgentIdx()];
-    if (!pane || !data || !pane.agent) return;
-    send({
-      type: "kill-agent-pane",
-      session: data.name,
-      agent: pane.agent.agent,
-      threadId: pane.agent.threadId,
-      threadName: pane.agent.threadName,
-    });
-  }
-
-  function applyTheme(themeName: string) {
-    send({ type: "set-theme", theme: themeName });
-  }
-
-  function previewTheme(themeName: string) {
-    setTheme(resolveTheme(themeName));
-  }
-
-  function createNewSession() {
-    if (muxCtx.type !== "tmux") {
-      send({ type: "new-session" });
-      return;
-    }
-    const scriptPath = new URL("../scripts/sessionizer.sh", import.meta.url).pathname;
-    muxCtx.sdk.displayPopup({
-      command: `bash "${scriptPath}"`,
-      title: " new session ",
-      width: "60%",
-      height: "60%",
-      closeOnExit: true,
-      env: { TCM_FZF_COLORS: paletteToFzfColors(P()) },
-    });
   }
 
   onMount(() => {
@@ -1278,149 +1203,35 @@ function App() {
   useKeyboard((key) => {
     const currentModal = modal();
 
-    // --- Theme picker modal: input handles all keys via onKeyDown ---
-    if (currentModal === "theme-picker") {
-      return;
-    }
-
     // --- Help modal: any key dismisses ---
     if (currentModal === "help") {
       setModal("none");
       return;
     }
 
-    // --- Confirm kill modal ---
-    if (currentModal === "confirm-kill") {
-      if (key.name === "y") {
-        const target = killTarget();
-        if (target) send({ type: "kill-session", name: target });
-        setKillTarget(null);
-        setModal("none");
-      } else {
-        setKillTarget(null);
-        setModal("none");
-      }
-      return;
-    }
-
     // --- Normal mode keybindings ---
-    // Alt+Up / Alt+Down → reorder session
-    if ((key.meta || key.option) && (key.name === "up" || key.name === "down")) {
-      const focused = focusedSession();
-      if (focused) {
-        const delta: -1 | 1 = key.name === "up" ? -1 : 1;
-        send({ type: "reorder-session", name: focused, delta });
-      }
-      return;
-    }
-
     switch (key.name) {
       case "q":
         send({ type: "quit" });
         break;
-      case "escape":
-        if (panelFocus() === "agents") {
-          setPanelFocus("sessions");
-        }
-        break;
       case "up":
       case "k":
-        if (panelFocus() === "agents") {
-          moveAgentFocus(-1);
-        } else {
-          moveLocalFocus(-1);
-        }
+        moveAgentFocus(-1);
         break;
       case "down":
       case "j":
-        if (panelFocus() === "agents") {
-          moveAgentFocus(1);
-        } else {
-          moveLocalFocus(1);
-        }
+        moveAgentFocus(1);
         break;
-      case "left":
-      case "h":
-        if (panelFocus() === "agents") {
-          setPanelFocus("sessions");
-        }
+      case "return":
+        activateFocusedAgent();
         break;
-      case "right":
-      case "l":
-        if (panelFocus() === "sessions") {
-          const data = focusedData();
-          const rows = data?.paneRows ?? [];
-          if (rows.length > 0) {
-            setPanelFocus("agents");
-            setFocusedAgentIdx((idx) => Math.min(idx, rows.length - 1));
-          }
-        }
-        break;
-      case "return": {
-        if (panelFocus() === "agents") {
-          activateFocusedAgent();
-        } else {
-          const focused = focusedSession();
-          if (focused) switchToSession(focused);
-        }
-        break;
-      }
-      case "tab": {
-        const list = sessions;
-        if (list.length === 0) break;
-        const cur = currentSession();
-        const idx = list.findIndex((s) => s.name === cur);
-        const next = list[(idx + (key.shift ? list.length - 1 : 1)) % list.length];
-        if (next) switchToSession(next.name);
-        break;
-      }
       case "r":
         send({ type: "refresh" });
         flash("refreshed");
         break;
-      case "=":
-        send({ type: "equalize-width" });
-        flash("reset width");
-        break;
-      case "t":
-        themeBeforePreview = theme();
-        setModal("theme-picker");
-        break;
-      case "u":
-        send({ type: "show-all-sessions" });
-        break;
-      case "d": {
-        const focused = focusedSession();
-        if (focused) send({ type: "hide-session", name: focused });
-        break;
-      }
-      case "x": {
-        if (panelFocus() === "agents") {
-          killFocusedAgentPane();
-        } else {
-          const focused = focusedSession();
-          if (focused) {
-            setKillTarget(focused);
-            setModal("confirm-kill");
-          }
-        }
-        break;
-      }
-      case "n":
-      case "c":
-        createNewSession();
-        break;
       case "?":
         setModal("help");
         break;
-      default: {
-        if (key.number) {
-          const idx = parseInt(key.name, 10) - 1;
-          const target = sessions[idx];
-          if (target) switchToSession(target.name);
-        }
-        break;
-      }
     }
   });
 
@@ -1582,90 +1393,17 @@ function App() {
         return (
           <box flexDirection="column" paddingLeft={1} paddingBottom={1} paddingTop={0} flexShrink={0}>
             <box height={1}><text style={{ fg: paneFocused() ? P().overlay0 : P().surface2 }}>{"─".repeat(200)}</text></box>
-            <Show when={panelFocus() === "sessions"} fallback={
-              <text>
-                <span style={{ fg: keyFg() }}>{"←"}</span>
-                <span style={{ fg: labelFg() }}>{" back  "}</span>
-                <span style={{ fg: keyFg() }}>{"⏎"}</span>
-                <span style={{ fg: labelFg() }}>{" focus  "}</span>
-                <span style={{ fg: keyFg() }}>{"d"}</span>
-                <span style={{ fg: labelFg() }}>{" dismiss  "}</span>
-                <span style={{ fg: keyFg() }}>{"x"}</span>
-                <span style={{ fg: labelFg() }}>{" kill  "}</span>
-                <span style={{ fg: keyFg() }}>{"?"}</span>
-                <span style={{ fg: labelFg() }}>{" help"}</span>
-              </text>
-            }>
-              <text>
-                <span style={{ fg: keyFg() }}>{"⇥"}</span>
-                <span style={{ fg: labelFg() }}>{" cycle  "}</span>
-                <span style={{ fg: keyFg() }}>{"⏎"}</span>
-                <span style={{ fg: labelFg() }}>{" go  "}</span>
-                <span style={{ fg: keyFg() }}>{"d"}</span>
-                <span style={{ fg: labelFg() }}>{" hide  "}</span>
-                <span style={{ fg: keyFg() }}>{"?"}</span>
-                <span style={{ fg: labelFg() }}>{" help"}</span>
-              </text>
-            </Show>
+            <text>
+              <span style={{ fg: keyFg() }}>{"⏎"}</span>
+              <span style={{ fg: labelFg() }}>{" focus  "}</span>
+              <span style={{ fg: keyFg() }}>{"r"}</span>
+              <span style={{ fg: labelFg() }}>{" refresh  "}</span>
+              <span style={{ fg: keyFg() }}>{"?"}</span>
+              <span style={{ fg: labelFg() }}>{" help"}</span>
+            </text>
           </box>
         );
       })()}
-
-      {/* Theme picker overlay */}
-      <Show when={modal() === "theme-picker"}>
-        <ThemePicker
-          palette={P}
-          onSelect={(name) => {
-            themeBeforePreview = null;
-            applyTheme(name);
-            setModal("none");
-          }}
-          onPreview={(name) => {
-            previewTheme(name);
-          }}
-          onClose={() => {
-            if (themeBeforePreview) {
-              setTheme(themeBeforePreview);
-              themeBeforePreview = null;
-            }
-            setModal("none");
-          }}
-        />
-      </Show>
-
-      {/* Kill confirmation overlay */}
-      <Show when={modal() === "confirm-kill"}>
-        <box
-          position="absolute"
-          top={0} left={0} right={0} bottom={0}
-          justifyContent="center"
-          alignItems="center"
-          backgroundColor="transparent"
-        >
-          <box
-            border
-            borderStyle="rounded"
-            borderColor={P().red}
-            backgroundColor={P().mantle}
-            padding={1}
-            paddingX={2}
-            flexDirection="column"
-            alignItems="center"
-          >
-            <text>
-              <span style={{ fg: P().red, attributes: BOLD }}>Kill session?</span>
-            </text>
-            <text>
-              <span style={{ fg: P().text }}>{killTarget() ?? ""}</span>
-            </text>
-            <text>
-              <span style={{ fg: P().overlay0 }}>y</span>
-              <span style={{ fg: P().overlay1 }}>/</span>
-              <span style={{ fg: P().overlay0 }}>n</span>
-            </text>
-          </box>
-        </box>
-      </Show>
 
       {/* Help overlay */}
       <Show when={modal() === "help"}>
@@ -1688,21 +1426,10 @@ function App() {
             <text><span style={{ fg: P().text, attributes: BOLD }}>Keybindings</span></text>
             <box height={1}><text style={{ fg: P().surface2 }}>{"─".repeat(200)}</text></box>
             {([
-              ["j/k", "navigate"],
-              ["⏎", "switch to session"],
-              ["⇥", "cycle next"],
-              ["⇧⇥", "cycle prev"],
-              ["→/l", "agent detail"],
-              ["←/h", "back to sessions"],
-              ["d", "hide / dismiss"],
-              ["u", "unhide all"],
-              ["x", "kill session / pane"],
-              ["n/c", "new session"],
+              ["j/k", "navigate panes"],
+              ["⏎", "focus pane"],
               ["r", "refresh"],
-              ["t", "theme picker"],
-              ["=", "reset width"],
-              ["⌥↑↓", "reorder"],
-              ["1-9", "jump to session"],
+              ["?", "this help"],
               ["q", "quit"],
             ] as const).map(([k, v]) => (
               <text>
@@ -1715,149 +1442,6 @@ function App() {
           </box>
         </box>
       </Show>
-    </box>
-  );
-}
-
-// --- Theme Picker ---
-
-interface ThemePickerProps {
-  palette: Accessor<Theme["palette"]>;
-  onSelect: (name: string) => void;
-  onPreview: (name: string) => void;
-  onClose: () => void;
-}
-
-function ThemePicker(props: ThemePickerProps) {
-  let inputRef: InputRenderable;
-
-  const [query, setQuery] = createSignal("");
-  const [selected, setSelected] = createSignal(0);
-
-  const filtered = createMemo(() => {
-    const q = query().toLowerCase();
-    if (!q) return THEME_NAMES;
-    return THEME_NAMES.filter((name) => name.toLowerCase().includes(q));
-  });
-
-  function move(direction: -1 | 1) {
-    const list = filtered();
-    if (!list.length) return;
-    let next = selected() + direction;
-    if (next < 0) next = list.length - 1;
-    if (next >= list.length) next = 0;
-    setSelected(next);
-    const name = list[next];
-    if (name) props.onPreview(name);
-  }
-
-  function confirm() {
-    const name = filtered()[selected()];
-    if (name) props.onSelect(name);
-  }
-
-  function handleKeyDown(e: KeyEvent) {
-    if (e.name === "up") {
-      e.preventDefault();
-      move(-1);
-    } else if (e.name === "down") {
-      e.preventDefault();
-      move(1);
-    } else if (e.name === "return") {
-      e.preventDefault();
-      confirm();
-    } else if (e.name === "escape") {
-      e.preventDefault();
-      props.onClose();
-    }
-  }
-
-  function handleInput(value: string) {
-    setQuery(value);
-    setSelected(0);
-  }
-
-  const MAX_VISIBLE = 12;
-
-  const scrollOffset = createMemo(() => {
-    const sel = selected();
-    if (sel < MAX_VISIBLE) return 0;
-    return sel - MAX_VISIBLE + 1;
-  });
-
-  const visibleItems = createMemo(() => {
-    const list = filtered();
-    return list.slice(scrollOffset(), scrollOffset() + MAX_VISIBLE);
-  });
-
-  return (
-    <box
-      position="absolute"
-      top={0} left={0} right={0} bottom={0}
-      justifyContent="center"
-      alignItems="center"
-      backgroundColor="transparent"
-    >
-      <box
-        border
-        borderStyle="rounded"
-        borderColor={props.palette().blue}
-        backgroundColor={props.palette().mantle}
-        padding={1}
-        flexDirection="column"
-        width={30}
-      >
-        <text>
-          <span style={{ fg: props.palette().blue, attributes: BOLD }}>Select Theme</span>
-        </text>
-        <box height={1}><text style={{ fg: props.palette().surface2 }}>{"─".repeat(200)}</text></box>
-        <box border borderColor={props.palette().surface1} marginBottom={1}>
-          <input
-            ref={(r: InputRenderable) => { inputRef = r; inputRef.focus(); }}
-            value={query()}
-            onInput={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder="Search themes…"
-            backgroundColor={props.palette().surface0}
-            focusedBackgroundColor={props.palette().surface0}
-            textColor={props.palette().text}
-            cursorColor={props.palette().blue}
-            placeholderColor={props.palette().overlay0}
-          />
-        </box>
-        <Show when={filtered().length > 0} fallback={
-          <box paddingLeft={1}><text style={{ fg: props.palette().overlay0 }}>No matches</text></box>
-        }>
-          <For each={visibleItems()}>
-            {(name) => {
-              const idx = createMemo(() => filtered().indexOf(name));
-              const isSel = createMemo(() => idx() === selected());
-              return (
-                <box
-                  paddingLeft={1}
-                  paddingRight={1}
-                  backgroundColor={isSel() ? props.palette().surface0 : undefined}
-                >
-                  <text style={{ fg: isSel() ? props.palette().text : props.palette().subtext0 }}>
-                    {isSel() ? "▸ " : "  "}{name}
-                  </text>
-                </box>
-              );
-            }}
-          </For>
-          <Show when={filtered().length > MAX_VISIBLE}>
-            <text style={{ fg: props.palette().overlay0, attributes: DIM }}>
-              {"  "}↕ {filtered().length - MAX_VISIBLE} more
-            </text>
-          </Show>
-        </Show>
-        <box height={1}><text style={{ fg: props.palette().surface2 }}>{"─".repeat(200)}</text></box>
-        <text style={{ fg: props.palette().overlay0 }}>
-          <span style={{ attributes: DIM }}>↑↓</span>{" browse  "}
-          <span style={{ attributes: DIM }}>⏎</span>{" select  "}
-          <span style={{ attributes: DIM }}>esc</span>{" close"}
-        </text>
-      </box>
     </box>
   );
 }
