@@ -1930,7 +1930,8 @@ function WindowGroupHeader(props: {
 type PaneStatus = { glyph: string; color: string };
 
 /** Map a pane (and current spinner frame) to the single leading glyph + color
- *  used at the head of each row. See spec "Status vocabulary" table. */
+ *  used at the head of each row.
+ *  Spec: docs/superpowers/specs/2026-05-13-sidebar-visuals-design.md ("Status vocabulary"). */
 function paneStatus(
   pane: PaneRow,
   spinIdx: number,
@@ -1939,12 +1940,16 @@ function paneStatus(
   const agent = pane.agent;
   if (agent) {
     if (agent.status === "running") {
-      return { glyph: SEV_WORKING_SPINNER[spinIdx % SEV_WORKING_SPINNER.length]!, color: palette.blue };
+      const frame = SEV_WORKING_SPINNER[spinIdx % SEV_WORKING_SPINNER.length]!;
+      return { glyph: frame, color: palette.blue };
     }
     if (agent.status === "waiting") return { glyph: SEV_WAITING, color: palette.yellow };
     if (agent.status === "error")   return { glyph: SEV_ERROR,   color: palette.red };
     // done / interrupted / idle — split by liveness
     if (agent.liveness === "alive") return { glyph: SEV_READY, color: palette.green };
+    // Any exited Claude pane renders as "stopped" regardless of status —
+    // an idle/done/interrupted Claude that has visibly exited is stopped,
+    // not ready (per spec "Status vocabulary" — overlay0 dim).
     if (agent.liveness === "exited") return { glyph: SEV_STOPPED, color: palette.overlay0 };
     // unknown liveness — for terminal statuses lean stopped, otherwise ready
     if (agent.status === "done" || agent.status === "interrupted") {
