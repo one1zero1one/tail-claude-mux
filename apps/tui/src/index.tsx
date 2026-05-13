@@ -838,9 +838,6 @@ function App() {
   // --- Pane focus: does this terminal pane have focus? ---
   const [paneFocused, setPaneFocused] = createSignal(false);
 
-  // --- Panel focus: sessions list vs agent detail ---
-  type PanelFocus = "sessions" | "agents";
-  const [panelFocus, setPanelFocus] = createSignal<PanelFocus>("sessions");
   const [focusedAgentIdx, setFocusedAgentIdx] = createSignal(0);
 
   // --- Modal state ---
@@ -960,7 +957,6 @@ function App() {
     // The server's focus/state broadcast will reconcile if needed.
     setCurrentSession(name);
     setFocusedSession(name);
-    setPanelFocus("sessions");
     setFocusedAgentIdx(0);
     // Hold paneFocused true during session switch — tmux's focus handoff
     // briefly unfocuses the sidebar, causing a visible blink.
@@ -1184,13 +1180,10 @@ function App() {
   });
 
 
-  // Reset agent-mode when focused session loses all pane rows
+  // Clamp focused agent index when pane rows shrink.
   createEffect(() => {
     const data = focusedData();
     const rows = data?.paneRows ?? [];
-    if (panelFocus() === "agents" && rows.length === 0) {
-      setPanelFocus("sessions");
-    }
     setFocusedAgentIdx((idx) => Math.min(idx, Math.max(0, rows.length - 1)));
   });
 
@@ -1266,7 +1259,6 @@ function App() {
                     send({ type: "focus-session", name: session.name });
                     switchToSession(session.name);
                   }}
-                  panelFocus={panelFocus}
                   focusedAgentIdx={focusedAgentIdx}
                   onPaneFocus={(pane) => {
                     appendFileSync("/tmp/tcm-tui-agent-click.log",
@@ -1302,7 +1294,6 @@ function App() {
                 theme={theme}
                 statusColors={S}
                 onSelect={() => switchToSession(data().name)}
-                panelFocus={panelFocus}
                 focusedAgentIdx={focusedAgentIdx}
                 onPaneFocus={(pane) => {
                   appendFileSync("/tmp/tcm-tui-agent-click.log",
@@ -1356,7 +1347,6 @@ function App() {
                     send({ type: "focus-session", name: session.name });
                     switchToSession(session.name);
                   }}
-                  panelFocus={panelFocus}
                   focusedAgentIdx={focusedAgentIdx}
                   onPaneFocus={(pane) => {
                     appendFileSync("/tmp/tcm-tui-agent-click.log",
@@ -1593,7 +1583,6 @@ interface SessionCardProps {
   theme: Accessor<Theme>;
   statusColors: Accessor<Theme["status"]>;
   onSelect: () => void;
-  panelFocus: Accessor<"sessions" | "agents">;
   focusedAgentIdx: Accessor<number>;
   onPaneFocus: (pane: PaneRow) => void;
 }
@@ -1799,7 +1788,7 @@ function SessionCard(props: SessionCardProps) {
                           pane={pane}
                           palette={() => P()}
                           spinIdx={props.spinIdx}
-                          isKeyboardFocused={props.panelFocus() === "agents" && flatIndex(windowId, i()) === props.focusedAgentIdx()}
+                          isKeyboardFocused={flatIndex(windowId, i()) === props.focusedAgentIdx()}
                           onFocusPane={() => props.onPaneFocus(pane)}
                         />
                       )}
