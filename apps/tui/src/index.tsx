@@ -27,6 +27,7 @@ import {
   SEV_STOPPED,
   SEV_ERROR,
   SEV_IDLE_DOT,
+  SEV_SHELL_RUNNING,
   // SEV_WAITING (nf-md-bell-alert) doubles as the catch-all system-tag glyph
   // when a row's source matches /^\[.+\]$/ — see ActivityZone Rule 0.
   BRAND_CLAWD,
@@ -1924,6 +1925,38 @@ function WindowGroupHeader(props: {
       </text>
     </box>
   );
+}
+
+type PaneStatus = { glyph: string; color: string };
+
+/** Map a pane (and current spinner frame) to the single leading glyph + color
+ *  used at the head of each row. See spec "Status vocabulary" table. */
+function paneStatus(
+  pane: PaneRow,
+  spinIdx: number,
+  palette: ThemePalette,
+): PaneStatus {
+  const agent = pane.agent;
+  if (agent) {
+    if (agent.status === "running") {
+      return { glyph: SEV_WORKING_SPINNER[spinIdx % SEV_WORKING_SPINNER.length]!, color: palette.blue };
+    }
+    if (agent.status === "waiting") return { glyph: SEV_WAITING, color: palette.yellow };
+    if (agent.status === "error")   return { glyph: SEV_ERROR,   color: palette.red };
+    // done / interrupted / idle — split by liveness
+    if (agent.liveness === "alive") return { glyph: SEV_READY, color: palette.green };
+    if (agent.liveness === "exited") return { glyph: SEV_STOPPED, color: palette.overlay0 };
+    // unknown liveness — for terminal statuses lean stopped, otherwise ready
+    if (agent.status === "done" || agent.status === "interrupted") {
+      return { glyph: SEV_STOPPED, color: palette.overlay0 };
+    }
+    return { glyph: SEV_READY, color: palette.green };
+  }
+  // No agent — shell pane.
+  const cmd = pane.paneCurrentCommand;
+  const isDefaultShell = cmd === "zsh" || cmd === "bash" || cmd === "fish";
+  if (isDefaultShell) return { glyph: SEV_IDLE_DOT, color: palette.overlay0 };
+  return { glyph: SEV_SHELL_RUNNING, color: palette.teal };
 }
 
 interface PaneRowItemProps {
