@@ -7,6 +7,7 @@ export interface PaneRow {
   windowId: string;
   windowName: string;
   windowActivityFlag: boolean;
+  windowActive: boolean;
   paneCurrentCommand: string;
   paneCurrentPath: string;
   branch?: string;

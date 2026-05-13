@@ -580,6 +580,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         windowId: scan.windowId,
         windowName: scan.windowName,
         windowActivityFlag: scan.windowActivityFlag,
+        windowActive: scan.windowActive,
         paneCurrentCommand: scan.paneCurrentCommand,
         paneCurrentPath: scan.paneCurrentPath,
         branch: getGitInfo(scan.paneCurrentPath).branch || undefined,
@@ -1269,6 +1270,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     windowId: string;
     windowName: string;
     windowActivityFlag: boolean;
+    windowActive: boolean;
     paneCurrentCommand: string;
     paneCurrentPath: string;
     /** Agent name if process-tree match found, else undefined. */
@@ -1283,7 +1285,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
 
     const raw = shell([
       "tmux", "list-panes", "-a",
-      "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{window_id}|#{window_name}|#{window_activity_flag}|#{pane_current_path}",
+      "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{window_id}|#{window_name}|#{window_activity_flag}|#{pane_current_path}|#{window_active}",
     ]);
     if (!raw) return result;
 
@@ -1298,6 +1300,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         windowName: parts[5] ?? "",
         windowActivityFlag: parts[6] === "1",
         paneCurrentPath: parts[7] ?? "",
+        windowActive: parts[8] === "1",
       };
     });
 
@@ -1331,6 +1334,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         windowId: pane.windowId,
         windowName: pane.windowName,
         windowActivityFlag: pane.windowActivityFlag,
+        windowActive: pane.windowActive,
         paneCurrentCommand: pane.cmd,
         paneCurrentPath: pane.paneCurrentPath,
         agent,
