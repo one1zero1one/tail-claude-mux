@@ -1378,10 +1378,12 @@ function App() {
           <box flexDirection="column" paddingLeft={1} paddingBottom={1} paddingTop={0} flexShrink={0}>
             <box height={1}><text style={{ fg: paneFocused() ? P().overlay0 : P().surface2 }}>{"─".repeat(200)}</text></box>
             <text>
-              <span style={{ fg: keyFg() }}>{"⏎"}</span>
-              <span style={{ fg: labelFg() }}>{" focus  "}</span>
+              <span style={{ fg: keyFg() }}>{"↩"}</span>
+              <span style={{ fg: labelFg() }}>{" focus "}</span>
+              <span style={{ fg: labelFg() }}>{"· "}</span>
               <span style={{ fg: keyFg() }}>{"r"}</span>
-              <span style={{ fg: labelFg() }}>{" refresh  "}</span>
+              <span style={{ fg: labelFg() }}>{" refresh "}</span>
+              <span style={{ fg: labelFg() }}>{"· "}</span>
               <span style={{ fg: keyFg() }}>{"?"}</span>
               <span style={{ fg: labelFg() }}>{" help"}</span>
             </text>
@@ -1411,7 +1413,7 @@ function App() {
             <box height={1}><text style={{ fg: P().surface2 }}>{"─".repeat(200)}</text></box>
             {([
               ["j/k", "navigate panes"],
-              ["⏎", "focus pane"],
+              ["↩", "focus pane"],
               ["r", "refresh"],
               ["?", "this help"],
               ["q", "quit"],
@@ -1779,7 +1781,7 @@ function SessionCard(props: SessionCardProps) {
                     <WindowGroupHeader
                       windowName={panesInWindow[0]!.windowName}
                       windowActive={panesInWindow[0]!.windowActive}
-                      windowActivityFlag={panesInWindow.some((p) => p.windowActivityFlag)}
+                      windowActivityFlag={panesInWindow[0]!.windowActivityFlag}
                       palette={() => P()}
                     />
                     <For each={panesInWindow}>
