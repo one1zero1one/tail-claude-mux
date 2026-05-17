@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { ClaudeCodeHookAdapter, toolDescription } from "../src/agents/watchers/claude-code-hooks";
 import type { AgentEvent } from "../src/contracts/agent";
 import type { AgentWatcherContext, HookPayload } from "../src/contracts/agent-watcher";
@@ -382,6 +385,106 @@ describe("ClaudeCodeHookAdapter", () => {
     expect(ctx.events).toHaveLength(3);
     expect(ctx.events[2].status).toBe("done");
     expect(ctx.events[2].ended).toBe(true);
+  });
+});
+
+// --- Thread name resolution from JSONL ---
+
+describe("ClaudeCodeHookAdapter — threadName resolution", () => {
+  let projectsDir: string;
+  let adapter: ClaudeCodeHookAdapter;
+  let ctx: ReturnType<typeof makeCtx>;
+
+  beforeEach(() => {
+    projectsDir = mkdtempSync(join(tmpdir(), "tcm-cc-projects-"));
+    adapter = new ClaudeCodeHookAdapter(projectsDir);
+    ctx = makeCtx({ "/tmp/myproject": "myproject" });
+    adapter.start(ctx);
+  });
+
+  afterEach(() => {
+    adapter.stop();
+    rmSync(projectsDir, { recursive: true, force: true });
+  });
+
+  /** Convenience: write a JSONL file for `threadId` under an encoded project dir. */
+  function writeJsonl(threadId: string, lines: object[]): string {
+    const projDir = join(projectsDir, "-tmp-myproject");
+    mkdirSync(projDir, { recursive: true });
+    const filePath = join(projDir, `${threadId}.jsonl`);
+    writeFileSync(filePath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    return filePath;
+  }
+
+  test("resolves custom-title written before SessionStart fires", async () => {
+    const threadId = "thread-pre";
+    writeJsonl(threadId, [
+      { type: "custom-title", customTitle: "test-tab-1-pane-1", sessionId: threadId },
+    ]);
+
+    adapter.handleHook(hook("SessionStart", threadId, "/tmp/myproject"));
+    // resolveThreadName is fire-and-forget; wait a tick for the file IO.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Two emits: synchronous (no threadName), then async resolution with name.
+    expect(ctx.events.length).toBeGreaterThanOrEqual(2);
+    const named = ctx.events.find((e) => e.threadName === "test-tab-1-pane-1");
+    expect(named).toBeDefined();
+    expect(named!.threadId).toBe(threadId);
+  });
+
+  test("retries when JSONL did not exist at first hook (race with Claude Code)", async () => {
+    // Regression for the /rename-doesn't-update bug: when SessionStart fires
+    // before Claude Code has created the JSONL on disk, resolveThreadName
+    // used to mark the thread permanently resolved and never retry. After
+    // /rename appended a custom-title to the file, refreshTitleFromJsonl
+    // would early-return because jsonlPath was still undefined.
+    const threadId = "thread-race";
+
+    // First hook — file does not exist yet.
+    adapter.handleHook(hook("SessionStart", threadId, "/tmp/myproject"));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // No threadName yet; we got just the synchronous emit.
+    expect(ctx.events.find((e) => e.threadName)).toBeUndefined();
+
+    // Claude Code writes the JSONL with a custom-title (simulates /rename).
+    writeJsonl(threadId, [
+      { type: "custom-title", customTitle: "test-tab-1-pane-1", sessionId: threadId },
+      { type: "agent-name", agentName: "test-tab-1-pane-1", sessionId: threadId },
+    ]);
+
+    // Next hook should trigger a re-resolve and emit with threadName.
+    adapter.handleHook(hook("UserPromptSubmit", threadId, "/tmp/myproject"));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const named = ctx.events.find((e) => e.threadName === "test-tab-1-pane-1");
+    expect(named).toBeDefined();
+  });
+
+  test("picks up /rename appended to an existing JSONL", async () => {
+    const threadId = "thread-rename";
+    const filePath = writeJsonl(threadId, [
+      { type: "summary", summary: "old session metadata", sessionId: threadId },
+    ]);
+
+    adapter.handleHook(hook("SessionStart", threadId, "/tmp/myproject"));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // First pass: file exists but no custom-title yet.
+    expect(ctx.events.find((e) => e.threadName)).toBeUndefined();
+
+    // Simulate /rename — Claude Code appends a custom-title entry.
+    appendFileSync(
+      filePath,
+      JSON.stringify({ type: "custom-title", customTitle: "renamed-via-slash", sessionId: threadId }) + "\n",
+    );
+
+    adapter.handleHook(hook("UserPromptSubmit", threadId, "/tmp/myproject"));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const named = ctx.events.find((e) => e.threadName === "renamed-via-slash");
+    expect(named).toBeDefined();
   });
 });
 

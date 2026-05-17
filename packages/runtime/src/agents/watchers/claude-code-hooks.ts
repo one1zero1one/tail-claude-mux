@@ -275,6 +275,12 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
       this.threads.set(threadId, state);
       // Queue one-time thread name resolution
       this.resolveThreadName(threadId, payload.cwd);
+    } else if (!state.nameResolved) {
+      // Previous resolve attempt couldn't find the JSONL yet (Claude Code
+      // writes it lazily after SessionStart). Retry until it succeeds —
+      // otherwise jsonlPath stays undefined and refreshTitleFromJsonl is
+      // permanently a no-op, so /rename never reaches the sidebar.
+      this.resolveThreadName(threadId, payload.cwd);
     } else {
       // Pick up /rename (writes a new custom-title entry to the JSONL between
       // hook events). Fire-and-forget — emits independently when title changes.
@@ -429,7 +435,6 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
   private async resolveThreadName(threadId: string, _cwd: string): Promise<void> {
     const state = this.threads.get(threadId);
     if (!state || state.nameResolved) return;
-    state.nameResolved = true;
 
     // Find the JSONL file for this session_id
     let dirs: string[];
@@ -441,6 +446,14 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
 
       let text: string;
       try { text = await Bun.file(filePath).text(); } catch { continue; }
+
+      // File located — mark resolved so this won't retry. Cache path + byte
+      // offset so refreshTitleFromJsonl() can tail incremental appends
+      // (e.g. /rename writing a new custom-title entry).
+      state.nameResolved = true;
+      state.jsonlPath = filePath;
+      state.jsonlOffset = Buffer.byteLength(text, "utf-8");
+      dbg("resolve", "found", { threadId: threadId.slice(0, 8), filePath, size: state.jsonlOffset });
 
       const lines = text.split("\n").filter(Boolean);
       let threadName: string | undefined;
@@ -456,21 +469,22 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
         }
       }
 
-      // Cache path + byte offset so refreshTitleFromJsonl() can tail incremental
-      // appends (e.g. /rename writing a new custom-title entry).
-      state.jsonlPath = filePath;
-      state.jsonlOffset = Buffer.byteLength(text, "utf-8");
-
       if (threadName && this.ctx) {
         state.threadName = threadName;
         // Re-emit with the resolved name
         const session = this.ctx.resolveSession(state.projectDir);
         if (session) {
+          dbg("resolve", "emit", { threadId: threadId.slice(0, 8), threadName, session });
           this.emit(threadId, state, session);
         }
       }
       return; // Found the file, done
     }
+
+    // No JSONL found in any project dir — leave nameResolved=false so the
+    // next hook for this thread retries. Claude Code creates the file
+    // asynchronously after SessionStart, so a same-tick miss is normal.
+    dbg("resolve", "not-found", { threadId: threadId.slice(0, 8), projectsDir: this.projectsDir });
   }
 
   /** Tail the thread's JSONL from the last consumed offset and pick up any new
