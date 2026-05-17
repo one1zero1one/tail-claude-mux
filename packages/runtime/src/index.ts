@@ -20,15 +20,24 @@ export type { AgentStatus, AgentLiveness, AgentEvent, PanePresenceInput } from "
 export { TERMINAL_STATUSES } from "./contracts/agent";
 export type { AgentWatcher, AgentWatcherContext, HookPayload, HookReceiver } from "./contracts/agent-watcher";
 export { isHookReceiver } from "./contracts/agent-watcher";
+export { parseHookPayload } from "./contracts/parse-hook-payload";
 export { AgentTracker } from "./agents/tracker";
 export { ClaudeCodeHookAdapter, toolDescription } from "./agents/watchers/claude-code-hooks";
 export { PiHookAdapter, piToolDescription } from "./agents/watchers/pi-hooks";
+export {
+  sanitizeForDisplay,
+  stringWidth,
+  stripAnsiEscapes,
+  stripNonPrintingControlChars,
+  truncateToWidth,
+} from "./text";
+export { glowPhase, lerpHex } from "./glow";
 export { loadConfig, saveConfig } from "./config";
 export type { TcmConfig } from "./config";
 export { resolveTheme, BUILTIN_THEMES, DEFAULT_THEME } from "./themes";
 export type { Theme, ThemePalette, PartialTheme } from "./themes";
 export { startServer } from "./server/index";
-export { STATUSLINE_LAST_WINDOW, STATUSLINE_SHELL } from "./server/tmux-header-sync";
+export { STATUSLINE_LAST_WINDOW, STATUSLINE_SHELL, AGENT_GLYPHS } from "./server/tmux-header-sync";
 export { ensureServer } from "./server/launcher";
 export {
   SERVER_PORT,

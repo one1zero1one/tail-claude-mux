@@ -6,6 +6,7 @@ import { isFullSidebarCapable, isBatchCapable } from "../contracts/mux";
 import type { AgentEvent } from "../contracts/agent";
 import type { AgentWatcher, AgentWatcherContext } from "../contracts/agent-watcher";
 import { isHookReceiver } from "../contracts/agent-watcher";
+import { parseHookPayload } from "../contracts/parse-hook-payload";
 import { AgentTracker } from "../agents/tracker";
 import { SessionOrder } from "./session-order";
 import { SessionMetadataStore } from "./metadata-store";
@@ -227,6 +228,10 @@ function syncGitWatchers(sessions: SessionData[], broadcastFn: () => void) {
 export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
   const allWatchers = watchers ?? [];
   const tracker = new AgentTracker();
+  // PID-based liveness sweep: every 5s, mark any tracked instance whose
+  // `pid` is no longer running as `liveness: "exited"`. Catches crashes
+  // and `kill -9` cases where no SessionEnd hook fires.
+  tracker.startLivenessCheck();
   const metadataStore = new SessionMetadataStore();
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
   const sessionOrderPath = join(home, ".config", "tcm", "session-order.json");
@@ -364,10 +369,18 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     });
   }
 
-  // Bootstrap active sessions
-  const currentSession = mux.getCurrentSession();
-  if (currentSession) {
-    tracker.setActiveSessions([currentSession]);
+  // Bootstrap active sessions. listAttachedSessions covers the multi-client
+  // case where getCurrentSession() fails closed with null — every attached
+  // client's session is "active" from the tracker's point of view, so
+  // terminal events for any of them are not flagged unseen at bootstrap.
+  // Falls back to the single-session result when no clients are attached
+  // (cold daemon start before any TUI connects) for backward compatibility.
+  const attachedSessions = mux.listAttachedSessions();
+  if (attachedSessions.length > 0) {
+    tracker.setActiveSessions(attachedSessions);
+  } else {
+    const currentSession = mux.getCurrentSession();
+    if (currentSession) tracker.setActiveSessions([currentSession]);
   }
 
   // --- Agent watcher context ---
@@ -463,10 +476,20 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
       // Direct path match
       const direct = map.get(projectDir);
       if (direct) return direct;
-      // Substring match (parent/child directories)
+      // Longest-prefix match. Two related projects can both prefix the
+      // watcher's cwd (~/Code/foo vs ~/Code/foo/sub); first-by-iteration
+      // routed the event to whichever Map happened to enumerate first.
+      // Scan both directions and pick the most specific (longest-dir) match.
+      let bestName: string | null = null;
+      let bestLen = -1;
       for (const [dir, name] of map) {
-        if (projectDir.startsWith(dir + "/") || dir.startsWith(projectDir + "/")) return name;
+        const match = projectDir.startsWith(dir + "/") || dir.startsWith(projectDir + "/");
+        if (match && dir.length > bestLen) {
+          bestName = name;
+          bestLen = dir.length;
+        }
       }
+      if (bestName !== null) return bestName;
       // Encoded match: the watcher couldn't decode the path unambiguously,
       // so try encoding each session dir and comparing against the encoded form.
       // Claude Code encodes /, ., and _ as - in project directory names.
@@ -517,13 +540,17 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
   // Map session name → client TTY (from hook context, for multi-client setups)
   const clientTtyBySession = new Map<string, string>();
 
-  function getCurrentSession(): string | null {
-    const result = mux.getCurrentSession();
+  /** Resolve the current session for one specific client when possible.
+   *  Pass `clientTty` from action handlers (the WebSocket-tracked client TTY)
+   *  to disambiguate in multi-attached-client setups. Without it, the mux
+   *  layer returns null when ≥2 clients are attached. */
+  function getCurrentSession(clientTty?: string): string | null {
+    const result = mux.getCurrentSession(clientTty);
     if (result) {
-      log("getCurrentSession", "result", { result, provider: mux.name });
+      log("getCurrentSession", "result", { result, provider: mux.name, clientTty });
       return result;
     }
-    log("getCurrentSession", "no provider returned a session");
+    log("getCurrentSession", "no provider returned a session", { clientTty });
     return null;
   }
 
@@ -1030,7 +1057,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     return false;
   }
 
-  const AGENT_TITLE_PATTERNS: Record<string, string[]> = {
+  const AGENT_COMM_PATTERNS: Record<string, string[]> = {
     amp: ["amp"],
     "claude-code": ["claude"],
     codex: ["codex"],
@@ -1042,39 +1069,67 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
   const PANE_HIGHLIGHT_MS = 300;
   const pendingHighlightResets = new Map<string, ReturnType<typeof setTimeout>>();
 
-  /** Walk child processes (up to 3 levels) to find a process matching `name`, returning its PID. */
-  function findChildPid(pid: string, name: string, depth = 0): string | undefined {
-    if (depth > 2) return undefined;
+  /** Walk child processes (up to 3 levels) and return EVERY descendant whose comm matches `name`.
+   *  Returning all matches (not just the first) lets resolvers inspect parent-and-Task-spawned-child
+   *  pairs in the same pane — a Claude Code "Task" tool spawns a sub-claude alongside the parent,
+   *  and only one of them carries the threadId the TUI clicked on.
+   *  Boundary-aware commMatches: "pi" matches "pi", "/usr/bin/pi", "pi-helper" but NOT "pip"/"pipenv". */
+  function findChildPids(pid: string, name: string): string[] {
+    const acc: string[] = [];
+    collectChildPids(pid, name, 0, acc);
+    return acc;
+  }
+  function collectChildPids(pid: string, name: string, depth: number, acc: string[]): void {
+    if (depth > 2) return;
     const children = shell(["pgrep", "-P", pid]);
-    if (!children) return undefined;
+    if (!children) return;
     for (const childPid of children.split("\n")) {
       const trimmed = childPid.trim();
       if (!trimmed) continue;
       const childCmd = shell(["ps", "-p", trimmed, "-o", "comm="]);
-      if (childCmd?.trim().toLowerCase().includes(name)) return trimmed;
-      const found = findChildPid(trimmed, name, depth + 1);
-      if (found) return found;
+      if (childCmd && commMatches(childCmd.trim().toLowerCase(), name)) acc.push(trimmed);
+      collectChildPids(trimmed, name, depth + 1, acc);
     }
-    return undefined;
+  }
+
+  /** Resolve every live agent pid living under a pane's process tree.
+   *  Reads patterns from AGENT_COMM_PATTERNS so callers don't open the
+   *  table; iterates the full pattern array (multi-pattern future-proof);
+   *  returns numbers so callers can compare against AgentEvent.pid directly.
+   *  Returns [] for unknown agents or panes with no matching descendants. */
+  function findAgentPidsInPane(panePid: string, agentName: string): number[] {
+    const patterns = AGENT_COMM_PATTERNS[agentName];
+    if (!patterns) return [];
+    const out: number[] = [];
+    for (const pat of patterns) {
+      for (const childPid of findChildPids(panePid, pat)) {
+        const n = parseInt(childPid, 10);
+        if (!Number.isNaN(n)) out.push(n);
+      }
+    }
+    return out;
   }
 
   type PaneEntry = { id: string; pid: string; cmd: string; title: string };
 
-  /** Claude Code: ~/.claude/sessions/<pid>.json → sessionId */
+  /** Claude Code: ~/.claude/sessions/<pid>.json → sessionId.
+   *  A pane can host multiple claude processes (parent + Task-spawned sub-agent),
+   *  so check every matching descendant — not just the first — before moving on. */
   function resolveClaudeCodePane(panes: PaneEntry[], threadId: string): string | undefined {
     const sessionsDir = join(homedir(), ".claude", "sessions");
     for (const pane of panes) {
-      const agentPid = findChildPid(pane.pid, "claude");
-      if (!agentPid) continue;
-      try {
-        const data = JSON.parse(readFileSync(join(sessionsDir, `${agentPid}.json`), "utf-8"));
-        if (data.sessionId === threadId) return pane.id;
-      } catch {}
+      for (const agentPid of findChildPids(pane.pid, "claude")) {
+        try {
+          const data = JSON.parse(readFileSync(join(sessionsDir, `${agentPid}.json`), "utf-8"));
+          if (data.sessionId === threadId) return pane.id;
+        } catch {}
+      }
     }
     return undefined;
   }
 
-  /** Codex: logs_1.sqlite process_uuid='pid:<PID>:*' → thread_id */
+  /** Codex: logs_1.sqlite process_uuid='pid:<PID>:*' → thread_id.
+   *  Same multi-descendant rule as Claude — try every matching pid before discarding the pane. */
   function resolveCodexPane(panes: PaneEntry[], threadId: string): string | undefined {
     const dbPath = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "logs_1.sqlite");
     let db: any;
@@ -1085,35 +1140,34 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
 
     try {
       for (const pane of panes) {
-        const agentPid = findChildPid(pane.pid, "codex");
-        if (!agentPid) continue;
-        const row = db.query(
-          `SELECT thread_id FROM logs WHERE process_uuid LIKE ? AND thread_id IS NOT NULL ORDER BY ts DESC LIMIT 1`,
-        ).get(`pid:${agentPid}:%`);
-        if (row?.thread_id === threadId) return pane.id;
+        for (const agentPid of findChildPids(pane.pid, "codex")) {
+          const row = db.query(
+            `SELECT thread_id FROM logs WHERE process_uuid LIKE ? AND thread_id IS NOT NULL ORDER BY ts DESC LIMIT 1`,
+          ).get(`pid:${agentPid}:%`);
+          if (row?.thread_id === threadId) return pane.id;
+        }
       }
     } finally { try { db.close(); } catch {} }
     return undefined;
   }
 
-  /** OpenCode: lsof → log file → grep session ID */
+  /** OpenCode: lsof → log file → grep session ID.
+   *  Same multi-descendant rule — opencode parent + spawned worker each have their own log. */
   function resolveOpenCodePane(panes: PaneEntry[], threadId: string): string | undefined {
     for (const pane of panes) {
-      const agentPid = findChildPid(pane.pid, "opencode");
-      if (!agentPid) continue;
-      const lsofOut = shell(["lsof", "-p", agentPid]);
-      if (!lsofOut) continue;
-      // Find the log file path from open file descriptors
-      const logLine = lsofOut.split("\n").find((l) => l.includes("/opencode/log/") && l.endsWith(".log"));
-      if (!logLine) continue;
-      // Extract absolute path — lsof NAME column starts at the last recognized path
-      const pathMatch = logLine.match(/\s(\/\S+\.log)$/);
-      if (!pathMatch) continue;
-      try {
-        const logText = readFileSync(pathMatch[1], "utf-8");
-        const match = logText.match(/ses_[A-Za-z0-9]+/);
-        if (match?.[0] === threadId) return pane.id;
-      } catch {}
+      for (const agentPid of findChildPids(pane.pid, "opencode")) {
+        const lsofOut = shell(["lsof", "-p", agentPid]);
+        if (!lsofOut) continue;
+        const logLine = lsofOut.split("\n").find((l) => l.includes("/opencode/log/") && l.endsWith(".log"));
+        if (!logLine) continue;
+        const pathMatch = logLine.match(/\s(\/\S+\.log)$/);
+        if (!pathMatch) continue;
+        try {
+          const logText = readFileSync(pathMatch[1], "utf-8");
+          const match = logText.match(/ses_[A-Za-z0-9]+/);
+          if (match?.[0] === threadId) return pane.id;
+        } catch {}
+      }
     }
     return undefined;
   }
@@ -1123,7 +1177,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     const p = sessionProviders.get(sessionName) ?? mux;
     if (p.name !== "tmux") return undefined;
 
-    const patterns = AGENT_TITLE_PATTERNS[agentName];
+    const patterns = AGENT_COMM_PATTERNS[agentName];
     if (!patterns) return undefined;
 
     const raw = shell([
@@ -1153,13 +1207,41 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
 
     let targetPaneId: string | undefined;
 
-    if (agentName === "claude-code" && threadId) {
+    // Pid-first shortcut: if the tracker already knows the agent process's
+    // pid, walk panes once and match descendants directly. This skips the
+    // per-agent resolvers (sessions/<pid>.json read, sqlite query, lsof) for
+    // the common case where everything is consistent — much cheaper and
+    // sidesteps any disagreement between event.pid and what the resolvers
+    // would re-derive. Fall through to per-agent resolution only when the
+    // tracker has no pid yet, or the pid is no longer present in any live
+    // pane (process exited, pane recycled).
+    const trackedEvent = tracker.getEvent(sessionName, agentName, threadId);
+    const expectedPid = trackedEvent?.pid;
+    if (expectedPid !== undefined) {
+      for (const pane of nonSidebar) {
+        if (findAgentPidsInPane(pane.pid, agentName).includes(expectedPid)) {
+          targetPaneId = pane.id;
+          break;
+        }
+      }
+    }
+
+    if (!targetPaneId && agentName === "claude-code" && threadId) {
       targetPaneId = resolveClaudeCodePane(nonSidebar, threadId);
     }
     if (!targetPaneId && agentName === "amp" && threadName) {
-      targetPaneId = nonSidebar
-        .find((p) => p.title.toLowerCase().startsWith("amp - ") && p.title.includes(threadName))
-        ?.id;
+      // Amp has no per-thread id surface we can correlate from outside, so
+      // the only signal is the pane title `amp - <thread-name>`. Substring
+      // matching collides when two threads' names contain each other
+      // ("refactor" vs "refactor-helper") — the old first-found resolution
+      // routed clicks at the wrong pane. Fail closed when the title doesn't
+      // disambiguate: collect every candidate, return only if exactly one
+      // matches. The pid-first shortcut above handles the common case;
+      // this is a cold-path fallback.
+      const candidates = nonSidebar.filter(
+        (p) => p.title.toLowerCase().startsWith("amp - ") && p.title.includes(threadName),
+      );
+      if (candidates.length === 1) targetPaneId = candidates[0]!.id;
     }
     if (!targetPaneId && agentName === "codex" && threadId) {
       targetPaneId = resolveCodexPane(nonSidebar, threadId);
@@ -1167,11 +1249,10 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     if (!targetPaneId && agentName === "opencode" && threadId) {
       targetPaneId = resolveOpenCodePane(nonSidebar, threadId);
     }
-    if (!targetPaneId) {
-      targetPaneId = nonSidebar
-        .find((p) => patterns.some((pat) => p.title.toLowerCase().includes(pat)))
-        ?.id;
-    }
+    // Title-substring fallback retired — too unsafe. A shell pane editing
+    // `claude-notes.md` (or any editor/grep with the agent name in its title)
+    // matched before the real agent process. The process-tree match below
+    // uses commMatches boundary rules and is strictly more correct.
     if (!targetPaneId) {
       for (const pane of nonSidebar) {
         if (matchProcessTree(pane.pid, patterns)) {
@@ -1183,19 +1264,22 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     return targetPaneId;
   }
 
-  function focusAgentPane(sessionName: string, agentName: string, threadId?: string, threadName?: string): void {
-    log("focus-agent-pane", "received", { sessionName, agentName, threadId, threadName });
-    const targetPaneId = resolveAgentPaneId(sessionName, agentName, threadId, threadName);
+  function focusAgentPane(sessionName: string, agentName: string, threadId?: string, threadName?: string, explicitPaneId?: string): void {
+    log("focus-agent-pane", "received", { sessionName, agentName, threadId, threadName, explicitPaneId });
+    // Prefer the paneId the tracker already knows — same source as the
+    // window number the user clicked on, so display and navigation stay
+    // consistent. Fall back to per-agent re-resolution for older clients
+    // or rows where the tracker has no paneId yet.
+    const targetPaneId = explicitPaneId ?? resolveAgentPaneId(sessionName, agentName, threadId, threadName);
     if (!targetPaneId) return;
 
-    log("focus-agent-pane", "focusing", { sessionName, agentName, paneId: targetPaneId });
+    log("focus-agent-pane", "focusing", { sessionName, agentName, paneId: targetPaneId, fromClient: explicitPaneId !== undefined });
 
-    // Switch to the window containing the target pane first,
-    // otherwise select-pane alone won't work across windows
-    const windowId = shell(["tmux", "display-message", "-t", targetPaneId, "-p", "#{window_id}"]);
-    if (windowId) {
-      shell(["tmux", "select-window", "-t", windowId.trim()]);
-    }
+    // Switch to the window containing the target pane first, otherwise
+    // select-pane alone won't work across windows. tmux select-window
+    // accepts a pane id directly (resolves to the pane's window), so we
+    // don't need the display-message subshell to look up window_id first.
+    shell(["tmux", "select-window", "-t", targetPaneId]);
     shell(["tmux", "select-pane", "-t", targetPaneId]);
 
     const existing = pendingHighlightResets.get(targetPaneId);
@@ -1213,12 +1297,51 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     );
   }
 
-  function killAgentPane(sessionName: string, agentName: string, threadId?: string, threadName?: string): void {
-    log("kill-agent-pane", "received", { sessionName, agentName, threadId, threadName });
-    const targetPaneId = resolveAgentPaneId(sessionName, agentName, threadId, threadName);
+  function killAgentPane(sessionName: string, agentName: string, threadId?: string, threadName?: string, explicitPaneId?: string): void {
+    log("kill-agent-pane", "received", { sessionName, agentName, threadId, threadName, explicitPaneId });
+    const targetPaneId = explicitPaneId ?? resolveAgentPaneId(sessionName, agentName, threadId, threadName);
     if (!targetPaneId) return;
 
-    log("kill-agent-pane", "killing", { sessionName, agentName, paneId: targetPaneId });
+    // Pid-verification gate: the tracker holds the agent process's pid at the
+    // moment the watcher reported it. If the pane has since been recycled —
+    // same paneId, new process inside — killing on paneId alone takes out an
+    // unrelated process. Compare the tracker's pid against the pane's current
+    // descendants (boundary-matched comm); if it's no longer present, refuse.
+    // Events without a known pid fall through to the old behavior (only really
+    // happens for synthetics from the pane-scanner before the tracker has
+    // observed a watcher event, where the kill target is unambiguous anyway).
+    const trackedEvent = tracker.getEvent(sessionName, agentName, threadId);
+    const expectedPid = trackedEvent?.pid;
+    if (expectedPid !== undefined) {
+      // Gate unknown agents before the verify path: findAgentPidsInPane
+      // returns [] for both "agent has no descendants in this pane" and
+      // "agent name has no comm-pattern entry". Refusing on [] would mislabel
+      // the second case as a pid mismatch. Caller-side this is unreachable
+      // (agentName originates from tracker events we emit) but a future
+      // alternate watcher could violate that assumption.
+      if (!(agentName in AGENT_COMM_PATTERNS)) {
+        log("kill-agent-pane", "unable to verify pid (no comm patterns for agent)", { sessionName, agentName, paneId: targetPaneId });
+        return;
+      }
+      // The display-message subshell here is structural, not vestigial like
+      // Bug 14's: paneId (e.g. "%5") is tmux's identifier; findAgentPidsInPane
+      // needs the pane's OS shell pid to feed `pgrep -P`. No tmux primitive
+      // takes a paneId and enumerates descendants by comm. Caching pane_pid in
+      // the tracker would re-create the stale-data bug this gate exists to
+      // catch (pane_pid mutates on every pane recycle).
+      const panePidStr = shell(["tmux", "display-message", "-t", targetPaneId, "-p", "#{pane_pid}"])?.trim();
+      if (!panePidStr) {
+        log("kill-agent-pane", "unable to verify pid (no pane_pid)", { sessionName, agentName, paneId: targetPaneId });
+        return;
+      }
+      const liveAgentPids = findAgentPidsInPane(panePidStr, agentName);
+      if (!liveAgentPids.includes(expectedPid)) {
+        log("kill-agent-pane", "refusing — pid mismatch (pane recycled?)", { sessionName, agentName, paneId: targetPaneId, expectedPid, liveAgentPids });
+        return;
+      }
+    }
+
+    log("kill-agent-pane", "killing", { sessionName, agentName, paneId: targetPaneId, fromClient: explicitPaneId !== undefined, expectedPid });
     shell(["tmux", "kill-pane", "-t", targetPaneId]);
   }
 
@@ -1249,20 +1372,26 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
   // commMatches is hoisted to module scope (see export at file bottom) so
   // unit tests can exercise the boundary rules without spinning up a server.
 
-  /** Walk up to 3 levels of child processes using a pre-built process tree. */
+  /** Walk up to 3 levels of child processes using a pre-built process tree.
+   *  Returns the matched child PID (the agent process itself, e.g. the claude
+   *  binary), or undefined if no descendant matches any pattern.
+   *  Callers use the PID to disambiguate among multiple agent watcher entries
+   *  with the same agent name — watcher event.pid is the same claude PID,
+   *  so the claim is unambiguous when both sides agree. */
   function matchProcessTreeFast(
     pid: number, patterns: string[],
     tree: ReturnType<typeof buildProcessTree>, depth = 0,
-  ): boolean {
-    if (depth > 2) return false;
+  ): number | undefined {
+    if (depth > 2) return undefined;
     const children = tree.childrenOf.get(pid);
-    if (!children) return false;
+    if (!children) return undefined;
     for (const childPid of children) {
       const comm = tree.commOf.get(childPid);
-      if (comm && patterns.some((pat) => commMatches(comm, pat))) return true;
-      if (matchProcessTreeFast(childPid, patterns, tree, depth + 1)) return true;
+      if (comm && patterns.some((pat) => commMatches(comm, pat))) return childPid;
+      const deeper = matchProcessTreeFast(childPid, patterns, tree, depth + 1);
+      if (deeper !== undefined) return deeper;
     }
-    return false;
+    return undefined;
   }
 
   type PaneScan = {
@@ -1271,10 +1400,14 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     windowName: string;
     windowActivityFlag: boolean;
     windowActive: boolean;
+    windowIndex?: number;
+    paneIndex?: number;
     paneCurrentCommand: string;
     paneCurrentPath: string;
     /** Agent name if process-tree match found, else undefined. */
     agent?: string;
+    /** PID of the agent process when `agent` is set. */
+    agentPid?: number;
   };
 
   /** Scan every pane across every tmux session. Returns full pane metadata
@@ -1285,12 +1418,14 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
 
     const raw = shell([
       "tmux", "list-panes", "-a",
-      "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{window_id}|#{window_name}|#{window_activity_flag}|#{pane_current_path}|#{window_active}",
+      "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{window_id}|#{window_name}|#{window_activity_flag}|#{pane_current_path}|#{window_active}|#{window_index}|#{pane_index}",
     ]);
     if (!raw) return result;
 
     const panes = raw.split("\n").filter(Boolean).map((line) => {
       const parts = line.split("|");
+      const wi = parseInt(parts[9] ?? "", 10);
+      const pi = parseInt(parts[10] ?? "", 10);
       return {
         session: parts[0] ?? "",
         paneId: parts[1] ?? "",
@@ -1301,6 +1436,8 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         windowActivityFlag: parts[6] === "1",
         paneCurrentPath: parts[7] ?? "",
         windowActive: parts[8] === "1",
+        windowIndex: Number.isFinite(wi) ? wi : undefined,
+        paneIndex: Number.isFinite(pi) ? pi : undefined,
       };
     });
 
@@ -1317,11 +1454,15 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
 
     for (const pane of nonSidebar) {
       let agent: string | undefined;
-      for (const [agentName, patterns] of Object.entries(AGENT_TITLE_PATTERNS)) {
-        if (matchProcessTreeFast(pane.pid, patterns, tree)) {
-          agent = agentName;
-          break;
-        }
+      let agentPid: number | undefined;
+      for (const [agentName, patterns] of Object.entries(AGENT_COMM_PATTERNS)) {
+        // Only use process tree matching — title matching produces false positives
+        // (e.g. an Amp thread named "Detect Claude session names" matches "claude")
+        const matchedPid = matchProcessTreeFast(pane.pid, patterns, tree);
+        if (matchedPid === undefined) continue;
+        agent = agentName;
+        agentPid = matchedPid;
+        break; // One agent per pane — first match wins (ordered so parents precede child tools)
       }
 
       let sessionPanes = result.get(pane.session);
@@ -1335,9 +1476,12 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         windowName: pane.windowName,
         windowActivityFlag: pane.windowActivityFlag,
         windowActive: pane.windowActive,
+        windowIndex: pane.windowIndex,
+        paneIndex: pane.paneIndex,
         paneCurrentCommand: pane.cmd,
         paneCurrentPath: pane.paneCurrentPath,
         agent,
+        agentPid,
       });
     }
 
@@ -1441,8 +1585,13 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         break;
       case "kill-session": {
         const p = sessionProviders.get(cmd.name) ?? mux;
-        // If killing the current session, switch to the adjacent session in sidebar order
-        const currentBefore = getCurrentSession();
+        // If killing the current session, switch to the adjacent session in sidebar order.
+        // Resolve "current" through this client's TTY so multi-attached-client setups
+        // don't accidentally fire the switch dance based on some OTHER client's session.
+        const clientSess = clientSessionNames.get(ws);
+        const ttyForCurrent = (clientSess ? clientTtyBySession.get(clientSess) : undefined)
+          ?? clientTtys.get(ws);
+        const currentBefore = getCurrentSession(ttyForCurrent);
         if (currentBefore === cmd.name) {
           const allNames = p.listSessions().map((s) => s.name);
           const visible = sessionOrder.apply(allNames);
@@ -1475,7 +1624,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         if (tracker.markSeen(cmd.name)) broadcastState();
         break;
       case "dismiss-agent":
-        if (tracker.dismiss(cmd.session, cmd.agent, cmd.threadId)) broadcastState();
+        if (tracker.dismiss(cmd.session, cmd.agent, cmd.threadId, cmd.paneId, cmd.pid)) broadcastState();
         break;
       case "set-theme":
         currentTheme = cmd.theme;
@@ -1496,8 +1645,8 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         }));
         break;
       case "focus-agent-pane":
-        log("handleCommand", "focus-agent-pane received", { session: cmd.session, agent: cmd.agent, threadId: cmd.threadId, threadName: cmd.threadName });
-        focusAgentPane(cmd.session, cmd.agent, cmd.threadId, cmd.threadName);
+        log("handleCommand", "focus-agent-pane received", { session: cmd.session, agent: cmd.agent, threadId: cmd.threadId, threadName: cmd.threadName, paneId: cmd.paneId });
+        focusAgentPane(cmd.session, cmd.agent, cmd.threadId, cmd.threadName, cmd.paneId);
         break;
       case "focus-pane": {
         log("handleCommand", "focus-pane received", { paneId: cmd.paneId });
@@ -1508,8 +1657,8 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         break;
       }
       case "kill-agent-pane":
-        log("handleCommand", "kill-agent-pane received", { session: cmd.session, agent: cmd.agent, threadId: cmd.threadId, threadName: cmd.threadName });
-        killAgentPane(cmd.session, cmd.agent, cmd.threadId, cmd.threadName);
+        log("handleCommand", "kill-agent-pane received", { session: cmd.session, agent: cmd.agent, threadId: cmd.threadId, threadName: cmd.threadName, paneId: cmd.paneId });
+        killAgentPane(cmd.session, cmd.agent, cmd.threadId, cmd.threadName, cmd.paneId);
         break;
       case "report-width": {
         if (!sidebarVisible) {
@@ -1560,6 +1709,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
   }
   function cleanup() {
     for (const w of allWatchers) w.stop();
+    tracker.stopLivenessCheck();
     if (watcherBroadcastTimer) clearTimeout(watcherBroadcastTimer);
     if (debounceTimer) clearTimeout(debounceTimer);
     if (paneScanTimer) clearInterval(paneScanTimer);
@@ -1604,15 +1754,19 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
       }
 
       // Hook endpoint: receives lifecycle events from agent processes.
-      // Always returns 200 — hook failures must never block the agent.
+      // Always returns 200 — hook failures must never block the agent. The
+      // wire-event validator drops malformed payloads silently rather than
+      // 4xx'ing, so the agent always sees success regardless.
       if (req.method === "POST" && url.pathname === "/hook") {
         try {
           const body = (await req.json()) as unknown;
-          if (body && typeof body === "object") {
-            const payload = body as import("../contracts/agent-watcher").HookPayload;
+          const payload = parseHookPayload(body);
+          if (payload) {
             for (const w of allWatchers) {
               if (isHookReceiver(w)) w.handleHook(payload);
             }
+          } else {
+            log("hook", "rejected-malformed", { hint: "schema validation failed" });
           }
         } catch {}
         return new Response("ok", { status: 200 });

@@ -22,10 +22,27 @@ export interface AgentEvent {
   paneId?: string;
   /** Set by pane scanner — the tmux window name containing paneId. Cleared when paneId clears. */
   windowName?: string;
+  /** Set by pane scanner — tmux window index where this agent's pane lives.
+   *  Used in the TUI agent-row left slot so rows line up with the status-bar
+   *  window tabs. Renumbers when windows close if `renumber-windows on`. */
+  windowIndex?: number;
+  /** Set by pane scanner — tmux pane index within the window. Used as the
+   *  secondary sort key so multiple agents in the same window appear in
+   *  pane order. */
+  paneIndex?: number;
   /** Whether the agent process is alive, exited, or unknown (no pane info) */
   liveness?: AgentLiveness;
+  /** OS process id of the long-lived agent process. Resolved by the watcher
+   *  via ancestor walk (Claude Code) or reported directly by the extension
+   *  (pi). When present, the tracker's liveness sweep uses `process.kill(pid, 0)`
+   *  to detect crashes that don't fire a SessionEnd hook. Local sessions only. */
+  pid?: number;
   /** Human-readable description of current activity, e.g. "Reading config.ts" or "Bash: git push" */
   toolDescription?: string;
+  /** Active subagent name when CC is running a Task tool call (e.g. "rb-orchestrator").
+   *  Sourced from ~/.claude/sessions/<pid>.json `agent` field; undefined when the
+   *  parent thread is in control. */
+  subagent?: string;
   /** Signals the tracker to remove this instance immediately instead of holding
    *  it in the terminal-prune window. Set by watchers when the underlying
    *  agent session has definitively ended (e.g. SessionEnd hook). */
@@ -41,4 +58,14 @@ export interface PanePresenceInput {
   agent: string;
   paneId: string;
   windowName?: string;
+  /** Agent process PID resolved via descendant walk of the pane's shell.
+   *  Matches AgentEvent.pid so the tracker can claim a watcher entry by
+   *  PID instead of "first unclaimed by iteration order" — which silently
+   *  crisscrossed entries when multiple panes shared an agent name. */
+  pid?: number;
+  /** tmux window index hosting this pane — surfaced in the TUI to mirror the
+   *  status-bar window tabs. */
+  windowIndex?: number;
+  /** tmux pane index within the window. Secondary sort key for the TUI list. */
+  paneIndex?: number;
 }

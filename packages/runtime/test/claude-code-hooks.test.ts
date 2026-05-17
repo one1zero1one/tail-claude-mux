@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, unlinkSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { ClaudeCodeHookAdapter, toolDescription } from "../src/agents/watchers/claude-code-hooks";
@@ -488,6 +488,159 @@ describe("ClaudeCodeHookAdapter — threadName resolution", () => {
   });
 });
 
+// --- sessions/<pid>.json subagent enrichment ---
+
+describe("ClaudeCodeHookAdapter subagent enrichment", () => {
+  let sessionsDir: string;
+  let adapter: ClaudeCodeHookAdapter;
+  let ctx: ReturnType<typeof makeCtx>;
+
+  function writeSession(pid: number, payload: Record<string, unknown>): void {
+    writeFileSync(join(sessionsDir, `${pid}.json`), JSON.stringify(payload));
+  }
+
+  beforeEach(() => {
+    sessionsDir = mkdtempSync(join(tmpdir(), "cc-sessions-"));
+    adapter = new ClaudeCodeHookAdapter(undefined, sessionsDir);
+    ctx = makeCtx({ "/tmp/myproject": "myproject" });
+    adapter.start(ctx);
+  });
+
+  afterEach(() => {
+    adapter.stop();
+    rmSync(sessionsDir, { recursive: true, force: true });
+  });
+
+  test("emits subagent from sessions/<pid>.json when agent field is present", () => {
+    writeSession(42000, {
+      pid: 42000,
+      sessionId: "sess-1",
+      procStart: "Sat May 16 09:00:00 2026",
+      agent: "rb-orchestrator",
+    });
+
+    adapter.handleHook(hook("UserPromptSubmit", "sess-1", "/tmp/myproject"));
+
+    expect(ctx.events).toHaveLength(1);
+    expect(ctx.events[0].subagent).toBe("rb-orchestrator");
+  });
+
+  test("omits subagent when sessions/<pid>.json lacks an agent field", () => {
+    writeSession(42001, {
+      pid: 42001,
+      sessionId: "sess-1",
+      procStart: "Sat May 16 09:00:00 2026",
+    });
+
+    adapter.handleHook(hook("UserPromptSubmit", "sess-1", "/tmp/myproject"));
+
+    expect(ctx.events).toHaveLength(1);
+    expect(ctx.events[0].subagent).toBeUndefined();
+  });
+
+  test("omits subagent when no sessions file matches the threadId", () => {
+    adapter.handleHook(hook("UserPromptSubmit", "sess-orphan", "/tmp/myproject"));
+
+    expect(ctx.events).toHaveLength(1);
+    expect(ctx.events[0].subagent).toBeUndefined();
+  });
+
+  test("re-reads file across events so subagent transitions reflect", () => {
+    writeSession(42002, {
+      pid: 42002,
+      sessionId: "sess-1",
+      procStart: "Sat May 16 09:00:00 2026",
+      agent: "rb-orchestrator",
+    });
+
+    adapter.handleHook(hook("UserPromptSubmit", "sess-1", "/tmp/myproject"));
+    expect(ctx.events[0].subagent).toBe("rb-orchestrator");
+
+    // Subagent finishes — agent field cleared by CC
+    writeSession(42002, {
+      pid: 42002,
+      sessionId: "sess-1",
+      procStart: "Sat May 16 09:00:00 2026",
+    });
+
+    // Re-emission: a new tool description forces an emit
+    adapter.handleHook(hook("PreToolUse", "sess-1", "/tmp/myproject", {
+      tool_name: "Read",
+      tool_input: { file_path: "/tmp/x.ts" },
+    }));
+
+    expect(ctx.events).toHaveLength(2);
+    expect(ctx.events[1].subagent).toBeUndefined();
+  });
+
+  test("detects PID reuse via sessionId mismatch", () => {
+    writeSession(42003, {
+      pid: 42003,
+      sessionId: "sess-old",
+      procStart: "Sat May 16 09:00:00 2026",
+      agent: "rb-orchestrator",
+    });
+
+    adapter.handleHook(hook("UserPromptSubmit", "sess-old", "/tmp/myproject"));
+    expect(ctx.events[0].subagent).toBe("rb-orchestrator");
+
+    // PID 42003 reused by a different CC process for sess-new
+    writeSession(42003, {
+      pid: 42003,
+      sessionId: "sess-new",
+      procStart: "Sat May 16 10:00:00 2026",
+      agent: "doc-writer",
+    });
+
+    adapter.handleHook(hook("UserPromptSubmit", "sess-new", "/tmp/myproject"));
+
+    expect(ctx.events).toHaveLength(2);
+    expect(ctx.events[1].threadId).toBe("sess-new");
+    expect(ctx.events[1].subagent).toBe("doc-writer");
+  });
+
+  test("file read errors do not propagate (subagent stays undefined)", () => {
+    // No file written — resolvePidFromSessions returns undefined, read fails
+    adapter.handleHook(hook("UserPromptSubmit", "sess-1", "/tmp/myproject"));
+
+    expect(ctx.events).toHaveLength(1);
+    expect(ctx.events[0].subagent).toBeUndefined();
+  });
+
+  test("malformed sessions file does not throw", () => {
+    writeFileSync(join(sessionsDir, "42004.json"), "{not json");
+
+    adapter.handleHook(hook("UserPromptSubmit", "sess-1", "/tmp/myproject"));
+
+    expect(ctx.events).toHaveLength(1);
+    expect(ctx.events[0].subagent).toBeUndefined();
+  });
+
+  test("disappearance of sessions file mid-flight leaves prior subagent on emitted state intact via tracker", () => {
+    // (Watcher-level) re-emission with file gone should result in undefined.
+    // The preservation behaviour lives in the tracker; this test asserts the
+    // watcher contract: on next emit after file removal, subagent is undefined.
+    writeSession(42005, {
+      pid: 42005,
+      sessionId: "sess-1",
+      procStart: "Sat May 16 09:00:00 2026",
+      agent: "rb-orchestrator",
+    });
+
+    adapter.handleHook(hook("UserPromptSubmit", "sess-1", "/tmp/myproject"));
+    expect(ctx.events[0].subagent).toBe("rb-orchestrator");
+
+    unlinkSync(join(sessionsDir, "42005.json"));
+
+    adapter.handleHook(hook("PreToolUse", "sess-1", "/tmp/myproject", {
+      tool_name: "Read",
+      tool_input: { file_path: "/tmp/x.ts" },
+    }));
+
+    expect(ctx.events[1].subagent).toBeUndefined();
+  });
+});
+
 // --- toolDescription unit tests ---
 
 describe("toolDescription", () => {
@@ -515,10 +668,12 @@ describe("toolDescription", () => {
       .toBe("Running git status");
   });
 
-  test("Bash truncates long commands to 30 chars", () => {
+  test("Bash truncates long commands to 30 cells with ellipsis", () => {
     const long = "a".repeat(50);
+    // truncateToWidth reserves one cell for the ellipsis, so a 50-char ASCII
+    // command with budget 30 yields 29 chars + "…" = 30 cells.
     expect(toolDescription("Bash", { command: long }))
-      .toBe(`Running ${long.slice(0, 30)}`);
+      .toBe(`Running ${"a".repeat(29)}…`);
   });
 
   test("Bash without command returns fallback", () => {
@@ -540,10 +695,10 @@ describe("toolDescription", () => {
       .toBe("Explore codebase structure");
   });
 
-  test("Agent truncates long descriptions to 40 chars", () => {
+  test("Agent truncates long descriptions to 40 cells with ellipsis", () => {
     const long = "a".repeat(60);
     expect(toolDescription("Agent", { description: long }))
-      .toBe(long.slice(0, 40));
+      .toBe(`${"a".repeat(39)}…`);
   });
 
   test("WebFetch returns static string", () => {
@@ -570,5 +725,96 @@ describe("toolDescription", () => {
 
   test("undefined tool_input still works", () => {
     expect(toolDescription("Bash", undefined)).toBe("Running command");
+  });
+});
+
+describe("ClaudeCodeHookAdapter — pid resolution", () => {
+  let adapter: ClaudeCodeHookAdapter;
+  let ctx: ReturnType<typeof makeCtx>;
+
+  beforeEach(() => {
+    adapter = new ClaudeCodeHookAdapter();
+    ctx = makeCtx({ "/tmp/myproject": "myproject" });
+    adapter.start(ctx);
+  });
+
+  afterEach(() => {
+    adapter.stop();
+  });
+
+  /** Helper to build a process_snapshot where pid 400 (the hook) is a
+   *  descendant of pid 200 (the long-lived claude). */
+  function snapshotWithClaudeAt200(): string {
+    return [
+      "  100     1 /sbin/launchd",
+      "  200   100 node /Users/kyle/.nvm/versions/node/v20/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+      "  300   200 /bin/sh -c hook.sh PreToolUse",
+      "  400   300 /bin/bash /Users/kyle/Code/meta-claude/tail-claude-mux/scripts/hook.sh PreToolUse",
+    ].join("\n");
+  }
+
+  test("resolves wrapper-shell pid to the long-lived claude pid", () => {
+    adapter.handleHook(
+      hook("SessionStart", "sess-1", "/tmp/myproject", {
+        pid: 400,
+        process_snapshot: snapshotWithClaudeAt200(),
+      }),
+    );
+    expect(ctx.events).toHaveLength(1);
+    expect(ctx.events[0].pid).toBe(200);
+  });
+
+  test("uses payload pid directly when it already matches claude in the snapshot", () => {
+    adapter.handleHook(
+      hook("SessionStart", "sess-1", "/tmp/myproject", {
+        pid: 200,
+        process_snapshot: snapshotWithClaudeAt200(),
+      }),
+    );
+    expect(ctx.events[0].pid).toBe(200);
+  });
+
+  test("drops pid when walker gives up and reported pid is not claude itself", () => {
+    // Walker can't reach claude in this snapshot.
+    const noClaude = [
+      "  100     1 /sbin/launchd",
+      "  200   100 /bin/bash",
+      "  400   200 /bin/bash /path/hook.sh",
+    ].join("\n");
+    adapter.handleHook(
+      hook("SessionStart", "sess-1", "/tmp/myproject", {
+        pid: 400,
+        process_snapshot: noClaude,
+      }),
+    );
+    // The wrapper pid would false-fire the liveness sweep, so we drop it.
+    expect(ctx.events[0].pid).toBeUndefined();
+  });
+
+  test("subsequent hooks reuse the resolved pid (resolved once per thread)", () => {
+    adapter.handleHook(
+      hook("SessionStart", "sess-1", "/tmp/myproject", {
+        pid: 400,
+        process_snapshot: snapshotWithClaudeAt200(),
+      }),
+    );
+    // Second hook with a totally different (e.g. stale) pid+snapshot should
+    // not re-resolve — pid is per-thread, captured once.
+    adapter.handleHook(
+      hook("PreToolUse", "sess-1", "/tmp/myproject", {
+        pid: 999,
+        process_snapshot: "",
+        tool_name: "Bash",
+        tool_input: { command: "ls" },
+      }),
+    );
+    const last = ctx.events[ctx.events.length - 1];
+    expect(last.pid).toBe(200);
+  });
+
+  test("works without pid/process_snapshot (legacy payloads)", () => {
+    adapter.handleHook(hook("SessionStart", "sess-1", "/tmp/myproject"));
+    expect(ctx.events).toHaveLength(1);
+    expect(ctx.events[0].pid).toBeUndefined();
   });
 });

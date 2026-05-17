@@ -1,5 +1,4 @@
 import type { AgentEvent } from "./contracts/agent";
-import type { MuxSessionInfo } from "./contracts/mux";
 import type { PartialTheme } from "./themes";
 
 export interface PaneRow {
@@ -130,13 +129,13 @@ export type ClientCommand =
   | { type: "move-focus"; delta: -1 | 1 }
   | { type: "focus-session"; name: string }
   | { type: "mark-seen"; name: string }
-  | { type: "dismiss-agent"; session: string; agent: string; threadId?: string }
+  | { type: "dismiss-agent"; session: string; agent: string; threadId?: string; paneId?: string; pid?: number }
   | { type: "set-theme"; theme: string }
   | { type: "identify"; clientTty: string }
   | { type: "quit" }
   | { type: "identify-pane"; paneId: string; sessionName: string }
-  | { type: "focus-agent-pane"; session: string; agent: string; threadId?: string; threadName?: string }
-  | { type: "kill-agent-pane"; session: string; agent: string; threadId?: string; threadName?: string }
+  | { type: "focus-agent-pane"; session: string; agent: string; threadId?: string; threadName?: string; paneId?: string }
+  | { type: "kill-agent-pane"; session: string; agent: string; threadId?: string; threadName?: string; paneId?: string }
   | { type: "focus-pane"; paneId: string }
   | { type: "report-width"; width: number }
   | { type: "equalize-width" };

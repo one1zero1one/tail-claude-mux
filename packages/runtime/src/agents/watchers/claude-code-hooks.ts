@@ -16,11 +16,19 @@
 import { readdir, stat } from "fs/promises";
 import { join, basename } from "path";
 import { homedir } from "os";
-import { appendFileSync } from "fs";
+import { appendFileSync, readdirSync, readFileSync } from "fs";
 
 import type { AgentStatus } from "../../contracts/agent";
 import { TERMINAL_STATUSES } from "../../contracts/agent";
 import type { AgentWatcher, AgentWatcherContext, HookPayload, HookReceiver } from "../../contracts/agent-watcher";
+import { parseProcessSnapshot, resolveAgentSessionPid } from "../resolve-agent-pid";
+import { sanitizeForDisplay, truncateToWidth } from "../../text";
+
+// Path-segment aware matcher for the long-lived claude process. Matches
+// `claude` or `claude-code` only when preceded by `^` or `/` and followed
+// by whitespace, another `/`, or end-of-string — so directory names that
+// contain "claude" as a substring (e.g. `meta-claude`) don't false-positive.
+const CLAUDE_CMD_RE = /(?:^|\/)claude(?:-code)?(?=\s|\/|$)/i;
 
 function dbg(tag: string, msg: string, data?: Record<string, unknown>) {
   const ts = new Date().toISOString().slice(11, 23);
@@ -120,7 +128,7 @@ function extractThreadName(entry: JournalEntry): string | undefined {
 
   if (!text) return undefined;
   if (text.startsWith("<") || text.startsWith("{") || text.startsWith("[Request")) return undefined;
-  return text.slice(0, 80);
+  return truncateToWidth(sanitizeForDisplay(text), 80);
 }
 
 function extractCustomTitle(entry: JournalEntry): string | undefined {
@@ -146,8 +154,16 @@ interface ThreadState {
   jsonlPath?: string;
   /** Byte offset already consumed when scanning for `custom-title` updates. */
   jsonlOffset?: number;
+  /** Resolved long-lived agent pid. Set on first hook for this thread either
+   *  via ancestor walk against the hook's process_snapshot (preferred) or via
+   *  refreshSubagent's sessions/-walk fallback. Used by the tracker's liveness
+   *  sweep and by refreshSubagent to key into sessions/<pid>.json. */
+  pid?: number;
   /** Last tool description from PreToolUse/PermissionRequest — cleared on non-tool events */
   lastToolDescription?: string;
+  /** Active subagent name from sessions/<pid>.json `agent` field, or undefined
+   *  when the parent CC thread is in control. */
+  subagent?: string;
 }
 
 const STALE_MS = 5 * 60 * 1000;
@@ -160,7 +176,11 @@ const IDLE_NOTIFICATION_TYPES = new Set(["idle_prompt"]);
 
 // --- Tool description generation (ported from seance ctl.zig:1565-1603) ---
 
-/** Generate a human-readable description of the current tool activity. */
+/** Generate a human-readable description of the current tool activity.
+ *  Every interpolated value from `toolInput` is run through
+ *  `sanitizeForDisplay` + `truncateToWidth` at the leaf, so a pasted ANSI
+ *  sequence in a Bash command or a wide-char path can't disturb the row's
+ *  column budget. */
 export function toolDescription(toolName: string | undefined, toolInput: Record<string, unknown> | undefined): string | undefined {
   if (!toolName) return undefined;
 
@@ -171,38 +191,44 @@ export function toolDescription(toolName: string | undefined, toolInput: Record<
     case "Edit": return fileDesc("Editing", input);
     case "Write": return fileDesc("Writing", input);
     case "Bash": {
-      const cmd = typeof input.command === "string" ? input.command : undefined;
-      if (cmd) return `Running ${cmd.slice(0, 30)}`;
+      const cmd = safeStr(input.command);
+      if (cmd) return `Running ${truncateToWidth(cmd, 30)}`;
       return "Running command";
     }
     case "Glob":
     case "Grep": {
-      const pattern = typeof input.pattern === "string" ? input.pattern : undefined;
-      if (pattern) return `Searching ${pattern.slice(0, 30)}`;
+      const pattern = safeStr(input.pattern);
+      if (pattern) return `Searching ${truncateToWidth(pattern, 30)}`;
       return "Searching";
     }
     case "Agent": {
-      const desc = typeof input.description === "string" ? input.description : undefined;
-      if (desc) return desc.slice(0, 40);
+      const desc = safeStr(input.description);
+      if (desc) return truncateToWidth(desc, 40);
       return "Agent";
     }
     case "WebFetch": return "Fetching URL";
     case "WebSearch": {
-      const query = typeof input.query === "string" ? input.query : undefined;
-      if (query) return `Search: ${query.slice(0, 30)}`;
+      const query = safeStr(input.query);
+      if (query) return `Search: ${truncateToWidth(query, 30)}`;
       return "Searching web";
     }
     case "AskUserQuestion": {
-      const q = typeof input.question === "string" ? input.question : undefined;
-      if (q) return `Question: ${q.slice(0, 50)}`;
+      const q = safeStr(input.question);
+      if (q) return `Question: ${truncateToWidth(q, 50)}`;
       return "Asking question";
     }
     default: return toolName;
   }
 }
 
+/** Read a string field, sanitize it for safe display, return "" if missing or non-string. */
+function safeStr(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return sanitizeForDisplay(value);
+}
+
 function fileDesc(verb: string, input: Record<string, unknown>): string {
-  const fp = typeof input.file_path === "string" ? input.file_path : undefined;
+  const fp = safeStr(input.file_path);
   if (fp) return `${verb} ${basename(fp)}`;
   return verb;
 }
@@ -228,10 +254,12 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
   private threads = new Map<string, ThreadState>();
   private ctx: AgentWatcherContext | null = null;
   private projectsDir: string;
+  private sessionsDir: string;
 
 
-  constructor(projectsDir?: string) {
+  constructor(projectsDir?: string, sessionsDir?: string) {
     this.projectsDir = projectsDir ?? join(homedir(), ".claude", "projects");
+    this.sessionsDir = sessionsDir ?? join(homedir(), ".claude", "sessions");
   }
 
   start(ctx: AgentWatcherContext): void {
@@ -286,6 +314,31 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
       // hook events). Fire-and-forget — emits independently when title changes.
       this.refreshTitleFromJsonl(threadId);
     }
+
+    // Resolve the long-lived agent pid once per thread. The hook's reported
+    // pid ($PPID) is the `sh -c` wrapper; walking ancestry against the
+    // snapshot finds the actual claude process. Re-resolve on every hook
+    // until we have a pid (a hook without process_snapshot can land first).
+    if (state.pid == null && payload.pid != null && payload.process_snapshot) {
+      const proc = parseProcessSnapshot(payload.process_snapshot);
+      const resolved = resolveAgentSessionPid(payload.pid, CLAUDE_CMD_RE, proc);
+      if (resolved !== payload.pid) {
+        // Walked up successfully to a claude ancestor.
+        state.pid = resolved;
+      } else {
+        // Walker gave up. Only trust the reported pid if its OWN command in
+        // the snapshot matches the claude pattern — otherwise it's the
+        // wrapper shell and would cause the liveness sweep to false-fire.
+        const info = proc.get(payload.pid);
+        if (info && CLAUDE_CMD_RE.test(info.command)) state.pid = payload.pid;
+      }
+    }
+
+    // Refresh subagent from sessions/<pid>.json. Failures are swallowed —
+    // state.subagent stays whatever it was (preserved through transient errors).
+    // Independent of the pid above (uses its own sessions/-walk resolver).
+    this.refreshSubagent(threadId, state);
+
 
     // SessionEnd must bypass the dedup check below: a prior Stop event
     // already set status=done, so the dedup path would otherwise swallow
@@ -346,8 +399,83 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
       threadId,
       threadName: state.threadName,
       toolDescription: state.lastToolDescription,
+      pid: state.pid,
+      subagent: state.subagent,
       ...(extras?.ended ? { ended: true } : {}),
     });
+  }
+
+  // --- sessions/<pid>.json resolution for subagent field ---
+
+  /** Walk ~/.claude/sessions/*.json once and return the pid matching `threadId`. */
+  private resolvePidFromSessions(threadId: string): number | undefined {
+    let entries: string[];
+    try { entries = readdirSync(this.sessionsDir); } catch { return undefined; }
+
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      const filePath = join(this.sessionsDir, entry);
+      try {
+        const data = JSON.parse(readFileSync(filePath, "utf-8"));
+        if (data.sessionId === threadId && typeof data.pid === "number") {
+          return data.pid;
+        }
+      } catch {}
+    }
+    return undefined;
+  }
+
+  /** Read sessions/<pid>.json and return the parsed payload (or undefined on failure). */
+  private readSessionFile(pid: number): { agent?: string; sessionId?: string } | undefined {
+    try {
+      return JSON.parse(readFileSync(join(this.sessionsDir, `${pid}.json`), "utf-8"));
+    } catch { return undefined; }
+  }
+
+  /** Refresh `state.subagent` from sessions/<pid>.json.
+   *
+   *  PID resolution precedence:
+   *    1. state.pid set by main's process-ancestry walker (preferred — uses the
+   *       hook's $PPID + process_snapshot, doesn't depend on sessions/ files).
+   *    2. Fall back to walking ~/.claude/sessions/*.json for a sessionId match.
+   *
+   *  PID-reuse detection: the file's sessionId must match this thread's id. If
+   *  it mismatches, the OS reused the pid for a different CC process — clear
+   *  the cache and re-resolve next hook. A *missing* file is NOT treated as
+   *  reuse: the file may be transiently unavailable (tests, race) and we
+   *  shouldn't clobber main's resolved pid on that signal alone. */
+  private refreshSubagent(threadId: string, state: ThreadState): void {
+    try {
+      // (1) Acquire pid via sessions/-walk only if main didn't already set one.
+      if (state.pid === undefined) {
+        const resolved = this.resolvePidFromSessions(threadId);
+        if (resolved === undefined) {
+          state.subagent = undefined;
+          return;
+        }
+        state.pid = resolved;
+      }
+
+      const cached = this.readSessionFile(state.pid);
+
+      // Missing file → don't clear state.pid (main may have set it correctly;
+      // file may be transient). Just clear subagent.
+      if (!cached) {
+        state.subagent = undefined;
+        return;
+      }
+
+      // sessionId mismatch is the authoritative PID-reuse signal — clear cache.
+      if (cached.sessionId !== threadId) {
+        state.pid = undefined;
+        state.subagent = undefined;
+        return;
+      }
+
+      state.subagent = typeof cached.agent === "string" ? cached.agent : undefined;
+    } catch {
+      state.subagent = undefined;
+    }
   }
 
   // --- Cold-start seed from JSONL files ---

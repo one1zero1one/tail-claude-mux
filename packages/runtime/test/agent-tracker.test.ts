@@ -176,6 +176,84 @@ describe("AgentTracker", () => {
     expect(tracker.getUnseen()).not.toContain("sess-1");
   });
 
+  test("dismiss with paneId targets the matching pane when threadIds collide", () => {
+    // Two panes running the same agent + threadId (replayed session, cloned
+    // worktree). Without paneId the dismiss would delete whichever Map key
+    // happened to win — both entries collapse to instanceKey("amp","t1") today,
+    // but the constraint scan should still honour paneId once we move the
+    // storage key off (agent, threadId). Asserts the API surface, not the
+    // storage shape.
+    tracker.applyEvent(event({ session: "sess-1", agent: "amp", threadId: "t1", paneId: "%5", pid: 1001 }));
+    expect(tracker.dismiss("sess-1", "amp", "t1", "%99", 9999)).toBe(false);
+    expect(tracker.dismiss("sess-1", "amp", "t1", "%5", 1001)).toBe(true);
+    expect(tracker.getAgents("sess-1")).toEqual([]);
+  });
+
+  test("getEvent returns the event for (session, agent, threadId) without scanning", () => {
+    tracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "running" }));
+    tracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "xyz", status: "waiting" }));
+    tracker.applyEvent(event({ session: "sess-2", agent: "claude-code", threadId: "abc", status: "done" }));
+
+    const hit = tracker.getEvent("sess-1", "claude-code", "abc");
+    expect(hit).not.toBeNull();
+    expect(hit?.threadId).toBe("abc");
+    expect(hit?.status).toBe("running");
+
+    const sibling = tracker.getEvent("sess-1", "claude-code", "xyz");
+    expect(sibling?.status).toBe("waiting");
+
+    expect(tracker.getEvent("sess-1", "amp", "abc")).toBeNull();
+    expect(tracker.getEvent("missing", "claude-code", "abc")).toBeNull();
+  });
+
+  test("getEvent finds synthetic rows keyed by pane (no threadId)", () => {
+    tracker.applyPanePresence("sess-1", [{ agent: "claude-code", paneId: "%9", pid: 1234 }]);
+    // Synthetics are stored under `agent:pane:<paneId>`. Lookup by threadId
+    // alone must NOT return the synthetic — it's a different identity.
+    expect(tracker.getEvent("sess-1", "claude-code", undefined)).toBeNull();
+    // But the synthetic IS retrievable by (agent, paneId) — see overload.
+    const synth = tracker.getEvent("sess-1", "claude-code", undefined, "%9");
+    expect(synth?.paneId).toBe("%9");
+  });
+
+  test("getState ties at same STATUS_PRIORITY break by most-recent ts", () => {
+    // Two waiting agents in the same session — same priority, different ts.
+    // Strict `>` on priority used to keep the first by Map iteration; the
+    // newer event must win.
+    tracker.applyEvent(event({ session: "sess-1", agent: "amp", threadId: "t1", status: "waiting", ts: 100 }));
+    tracker.applyEvent(event({ session: "sess-1", agent: "codex", threadId: "t2", status: "waiting", ts: 200 }));
+    expect(tracker.getState("sess-1")?.agent).toBe("codex");
+
+    // Swap arrival order; result should be the same (the codex event has
+    // higher ts regardless of insertion order).
+    const t2 = new AgentTracker();
+    t2.applyEvent(event({ session: "sess-1", agent: "codex", threadId: "t2", status: "waiting", ts: 200 }));
+    t2.applyEvent(event({ session: "sess-1", agent: "amp", threadId: "t1", status: "waiting", ts: 100 }));
+    expect(t2.getState("sess-1")?.agent).toBe("codex");
+  });
+
+  test("applyEvent preserves prev.pid when incoming event omits it", () => {
+    // Pane scanner posted a pid-bearing entry; a subsequent watcher event
+    // (e.g. PostToolUse) lands without pid. The pid must survive so the
+    // pid-keyed graduation branch can still disambiguate.
+    tracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "t", pid: 4242, paneId: "%1" }));
+    tracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "t", status: "waiting" })); // no pid, no paneId
+    const after = tracker.getAgents("sess-1").find((a) => a.threadId === "t");
+    expect(after?.pid).toBe(4242);
+    expect(after?.status).toBe("waiting");
+  });
+
+  test("dismiss without threadId can target a synthetic by paneId", () => {
+    // Synthetics carry paneId but no threadId — the old key-based dismiss
+    // would build instanceKey("amp", undefined) === "amp" and never match the
+    // synthetic stored under "amp:pane:%7".
+    tracker.applyPanePresence("sess-1", [{ agent: "amp", paneId: "%7", pid: 2002 }]);
+    expect(tracker.getAgents("sess-1").length).toBe(1);
+
+    expect(tracker.dismiss("sess-1", "amp", undefined, "%7")).toBe(true);
+    expect(tracker.getAgents("sess-1")).toEqual([]);
+  });
+
   // --- pruneStuck ---
 
   test("pruneStuck removes running states older than timeout", () => {
@@ -580,6 +658,127 @@ describe("AgentTracker", () => {
       expect(agents[0]!.paneId).toBe("%21");
       expect(agents[0]!.liveness).toBe("alive");
     });
+
+    test("suppresses synthetic creation for ~5s after SessionEnd on the same pane", () => {
+      // Simulate the /exit race: SessionEnd hook fires while ps still shows
+      // claude in the pane for a beat. Without suppression, the next pane
+      // scan mints a ghost synthetic that lingers until the miss counter
+      // drops it ~6s later.
+      let mockNow = 1_000_000;
+      const localTracker = new AgentTracker({ now: () => mockNow });
+
+      // Watcher entry established with a paneId via the normal flow.
+      localTracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "running" }));
+      localTracker.applyPanePresence("sess-1", [{ agent: "claude-code", paneId: "%50" }]);
+      expect(localTracker.getAgents("sess-1").length).toBe(1);
+
+      // SessionEnd fires — entry removed.
+      localTracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "done", ended: true }));
+      expect(localTracker.getAgents("sess-1").length).toBe(0);
+
+      // Pane scan within the suppression window still sees claude (exit cleanup).
+      // Synthetic must NOT be created.
+      mockNow += 1_000;
+      localTracker.applyPanePresence("sess-1", [{ agent: "claude-code", paneId: "%50" }]);
+      expect(localTracker.getAgents("sess-1").length).toBe(0);
+
+      mockNow += 3_000; // total +4s, still within 5s window
+      localTracker.applyPanePresence("sess-1", [{ agent: "claude-code", paneId: "%50" }]);
+      expect(localTracker.getAgents("sess-1").length).toBe(0);
+
+      // Past the window, scanner is allowed to mint a synthetic again
+      // (e.g. a freshly-launched claude in the same pane).
+      mockNow += 2_000; // total +6s
+      localTracker.applyPanePresence("sess-1", [{ agent: "claude-code", paneId: "%50" }]);
+      const agents = localTracker.getAgents("sess-1");
+      expect(agents.length).toBe(1);
+      expect(agents[0]!.threadId).toBeUndefined(); // synthetic, not a watcher entry
+      expect(agents[0]!.paneId).toBe("%50");
+    });
+
+    test("end-suppression is per pane: other panes in same session unaffected", () => {
+      let mockNow = 1_000_000;
+      const localTracker = new AgentTracker({ now: () => mockNow });
+
+      localTracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "running" }));
+      localTracker.applyPanePresence("sess-1", [{ agent: "claude-code", paneId: "%60" }]);
+
+      // /exit on pane %60
+      localTracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "done", ended: true }));
+
+      // Pane scan sees claude in %60 (residue) AND in %61 (a different live CC).
+      // %60's synthetic must stay suppressed; %61 must mint its synthetic.
+      mockNow += 500;
+      localTracker.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%60" },
+        { agent: "claude-code", paneId: "%61" },
+      ]);
+
+      const agents = localTracker.getAgents("sess-1");
+      expect(agents.length).toBe(1);
+      expect(agents[0]!.paneId).toBe("%61");
+    });
+
+    test("watcher applyEvent leaves synthetics for OTHER panes intact", () => {
+      // Two claude processes in the same tmux session: my watcher (pane %40)
+      // and a second claude (pane %41) that hasn't fired hooks yet.
+      // Scanner creates two synthetics first.
+      tracker.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%40" },
+        { agent: "claude-code", paneId: "%41" },
+      ]);
+      expect(tracker.getAgents("sess-1").length).toBe(2);
+
+      // My watcher arrives — graduates ONE synthetic (the one for my pane),
+      // must leave the other intact. Pre-fix bug: it nuked both, then the
+      // pane scanner re-created %41's synthetic on its next tick → flicker.
+      tracker.applyEvent(event({
+        session: "sess-1",
+        agent: "claude-code",
+        threadId: "mine",
+        status: "running",
+      }));
+
+      const agents = tracker.getAgents("sess-1");
+      expect(agents.length).toBe(2);
+
+      const mine = agents.find((a) => a.threadId === "mine")!;
+      const other = agents.find((a) => !a.threadId)!;
+
+      expect(mine.paneId === "%40" || mine.paneId === "%41").toBe(true);
+      expect(other).toBeDefined();
+      expect(other.paneId).not.toBe(mine.paneId);
+      expect(other.liveness).toBe("alive");
+    });
+
+    test("does not resurrect sweep-exited entry; creates synthetic for new pane occupant", () => {
+      // A tracker that pretends pid 42 is dead and pid 99 is alive.
+      const localTracker = new AgentTracker({ isPidAlive: (pid) => pid === 99 });
+
+      // Watcher entry for the original CC at pane %30 with pid 42.
+      localTracker.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "old-thread", status: "running", pid: 42 }));
+      localTracker.applyPanePresence("sess-1", [{ agent: "claude-code", paneId: "%30" }]);
+
+      // Sweep notices pid 42 is gone and flips liveness=exited on the watcher entry.
+      localTracker.runLivenessSweepOnce();
+      const afterSweep = localTracker.getAgents("sess-1").find((a) => a.threadId === "old-thread")!;
+      expect(afterSweep.liveness).toBe("exited");
+
+      // Pane %30 still has a claude (a *different* CC). Scanner must NOT
+      // resurrect the dead entry — it should create a synthetic instead, so
+      // the row stays exited until prune and the fresh CC gets its own slot
+      // when its first hook arrives.
+      localTracker.applyPanePresence("sess-1", [{ agent: "claude-code", paneId: "%30" }]);
+
+      const agents = localTracker.getAgents("sess-1");
+      const dead = agents.find((a) => a.threadId === "old-thread")!;
+      const synthetic = agents.find((a) => !a.threadId)!;
+
+      expect(dead.liveness).toBe("exited");           // still dead, not flipped back
+      expect(synthetic).toBeDefined();                 // synthetic created for the pane
+      expect(synthetic.paneId).toBe("%30");
+      expect(synthetic.liveness).toBe("alive");
+    });
   });
 
   // Pane-presence hysteresis: a single missed scan must not transition an
@@ -826,5 +1025,279 @@ describe("AgentTracker", () => {
     const sibling = agents.find((a) => !a.threadId);
     expect(sibling).toBeDefined();
     expect(sibling!.paneId).toBe("%11");
+  });
+
+  // --- runLivenessSweepOnce ---
+
+  describe("runLivenessSweepOnce", () => {
+    test("marks instances with dead pid as liveness='exited'", () => {
+      const alive = new Set<number>([200, 300]);
+      const t = new AgentTracker({ isPidAlive: (pid) => alive.has(pid) });
+      t.applyEvent(event({ session: "s1", agent: "claude-code", threadId: "a", status: "running", pid: 200 }));
+      t.applyEvent(event({ session: "s1", agent: "claude-code", threadId: "b", status: "running", pid: 999 }));
+
+      const changed = t.runLivenessSweepOnce();
+      expect(changed).toBe(true);
+
+      const agents = t.getAgents("s1");
+      const a = agents.find((e) => e.threadId === "a")!;
+      const b = agents.find((e) => e.threadId === "b")!;
+      expect(a.liveness).toBeUndefined(); // alive — no change
+      expect(b.liveness).toBe("exited");  // dead — marked
+    });
+
+    test("leaves alive pid alone", () => {
+      const t = new AgentTracker({ isPidAlive: () => true });
+      t.applyEvent(event({ session: "s1", status: "running", pid: 200 }));
+      const changed = t.runLivenessSweepOnce();
+      expect(changed).toBe(false);
+      expect(t.getState("s1")!.liveness).toBeUndefined();
+    });
+
+    test("skips instances without pid", () => {
+      const t = new AgentTracker({ isPidAlive: () => false });
+      t.applyEvent(event({ session: "s1", status: "running" })); // no pid
+      const changed = t.runLivenessSweepOnce();
+      expect(changed).toBe(false);
+    });
+
+    test("skips instances in a terminal status", () => {
+      // A done/error/interrupted instance keeps its current liveness — the
+      // sweep is for transitioning alive→exited, not for re-marking already
+      // done sessions.
+      const t = new AgentTracker({ isPidAlive: () => false });
+      t.applyEvent(event({ session: "s1", status: "done", pid: 999, liveness: "alive" }));
+      const changed = t.runLivenessSweepOnce();
+      expect(changed).toBe(false);
+      expect(t.getState("s1")!.liveness).toBe("alive");
+    });
+
+    test("skips instances already marked exited (idempotent)", () => {
+      const t = new AgentTracker({ isPidAlive: () => false });
+      t.applyEvent(event({ session: "s1", status: "running", pid: 999, liveness: "exited" }));
+      const changed = t.runLivenessSweepOnce();
+      expect(changed).toBe(false);
+    });
+
+    test("handles multiple sessions independently", () => {
+      const alive = new Set<number>([200]);
+      const t = new AgentTracker({ isPidAlive: (pid) => alive.has(pid) });
+      t.applyEvent(event({ session: "s1", status: "running", pid: 200 }));
+      t.applyEvent(event({ session: "s2", status: "running", pid: 999 }));
+
+      t.runLivenessSweepOnce();
+      expect(t.getState("s1")!.liveness).toBeUndefined();
+      expect(t.getState("s2")!.liveness).toBe("exited");
+    });
+  });
+
+  // --- startLivenessCheck / stopLivenessCheck ---
+
+  describe("startLivenessCheck / stopLivenessCheck", () => {
+    test("start twice is a no-op (no leaked interval)", () => {
+      const t = new AgentTracker({ isPidAlive: () => true });
+      t.startLivenessCheck(60_000);
+      t.startLivenessCheck(60_000); // idempotent
+      t.stopLivenessCheck();
+      // No assertion needed — if the timer leaked, Bun's test runner would
+      // refuse to exit.
+    });
+
+    test("stop is safe when never started", () => {
+      const t = new AgentTracker({ isPidAlive: () => true });
+      t.stopLivenessCheck(); // no-op
+    });
+  });
+
+  // --- subagent preservation ---
+
+  describe("subagent preservation", () => {
+    test("preserves prior subagent when incoming event has undefined", () => {
+      const t = new AgentTracker();
+      t.applyEvent(event({ session: "sess-1", threadId: "t1", status: "running", subagent: "rb-orchestrator" }));
+
+      // PostToolUse-style event with subagent absent — should not blank the field
+      t.applyEvent(event({ session: "sess-1", threadId: "t1", status: "running" }));
+
+      const agents = t.getAgents("sess-1");
+      expect(agents[0]!.subagent).toBe("rb-orchestrator");
+    });
+
+    test("overwrites subagent when incoming event provides a new value", () => {
+      const t = new AgentTracker();
+      t.applyEvent(event({ session: "sess-1", threadId: "t1", status: "running", subagent: "rb-orchestrator" }));
+      t.applyEvent(event({ session: "sess-1", threadId: "t1", status: "running", subagent: "doc-writer" }));
+
+      expect(t.getAgents("sess-1")[0]!.subagent).toBe("doc-writer");
+    });
+  });
+
+  // --- windowIndex / paneIndex from pane scanner ---
+
+  describe("windowIndex / paneIndex", () => {
+    test("synthetic carries windowIndex and paneIndex from scanner input", () => {
+      const t = new AgentTracker();
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%7", windowIndex: 3, paneIndex: 1 },
+      ]);
+
+      const a = t.getAgents("sess-1")[0]!;
+      expect(a.windowIndex).toBe(3);
+      expect(a.paneIndex).toBe(1);
+    });
+
+    test("watcher entry adopts windowIndex/paneIndex on pane enrichment", () => {
+      const t = new AgentTracker();
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "running" }));
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%7", windowIndex: 2, paneIndex: 0 },
+      ]);
+
+      const a = t.getAgents("sess-1")[0]!;
+      expect(a.windowIndex).toBe(2);
+      expect(a.paneIndex).toBe(0);
+    });
+
+    test("subsequent watcher event without pane info preserves windowIndex/paneIndex", () => {
+      const t = new AgentTracker();
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "running" }));
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%7", windowIndex: 2, paneIndex: 0 },
+      ]);
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "waiting" }));
+
+      const a = t.getAgents("sess-1")[0]!;
+      expect(a.windowIndex).toBe(2);
+      expect(a.paneIndex).toBe(0);
+    });
+
+    test("synthetic graduation copies windowIndex/paneIndex onto adopting watcher entry", () => {
+      const t = new AgentTracker();
+      // Pane scanner sees a claude-code in window 4 first — creates a synthetic.
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%9", windowIndex: 4, paneIndex: 2 },
+      ]);
+      // Then the watcher fires — should adopt the synthetic's pane fields.
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "running" }));
+
+      const agents = t.getAgents("sess-1");
+      expect(agents.length).toBe(1);
+      expect(agents[0]!.threadId).toBe("abc");
+      expect(agents[0]!.windowIndex).toBe(4);
+      expect(agents[0]!.paneIndex).toBe(2);
+    });
+
+    test("getAgents sorts by (windowIndex, paneIndex, firstSeenTs)", () => {
+      const t = new AgentTracker();
+      // Three watcher entries arrive in firstSeenTs order: t1, t2, t3.
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "t1", status: "running", ts: 100 }));
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "t2", status: "running", ts: 200 }));
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "t3", status: "running", ts: 300 }));
+
+      // Scanner reports them in window/pane order: t2→w1p0, t3→w2p0, t1→w2p1.
+      // Pane scanner doesn't know threadIds, so emit three panes; the claim
+      // loop picks one unclaimed entry per pane in instance-iteration order
+      // (t1, t2, t3 — Map insertion order). We control the assignment by
+      // calling applyPanePresence with one pane at a time across separate
+      // scans so each pane binds to the next unclaimed entry.
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%1", windowIndex: 2, paneIndex: 1 },
+        { agent: "claude-code", paneId: "%2", windowIndex: 1, paneIndex: 0 },
+        { agent: "claude-code", paneId: "%3", windowIndex: 2, paneIndex: 0 },
+      ]);
+
+      const order = t.getAgents("sess-1").map((a) => a.threadId);
+      // Expected: rows sort by (window asc, pane asc) — t2 (w1p0), t3 (w2p0), t1 (w2p1)
+      expect(order).toEqual(["t2", "t3", "t1"]);
+    });
+
+    test("claim loop prefers PID match over Map iteration order (no crisscross)", () => {
+      const t = new AgentTracker();
+      // Two claude-code watcher entries — different threadIds, different pids.
+      // Insertion order: assistant first, rb-orch second.
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "assistant", status: "running", pid: 1001 }));
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "rb-orch",  status: "running", pid: 2002 }));
+
+      // Scanner emits panes in the OPPOSITE order — rb-orch's pane first.
+      // Without pid-aware claiming, the loop would crisscross:
+      //   pane %200 (pid 2002) → claims first unclaimed entry = "assistant"
+      //   pane %100 (pid 1001) → claims next unclaimed entry = "rb-orch"
+      // With pid-aware claiming, each pane claims the entry whose pid matches.
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%200", pid: 2002, windowIndex: 2, paneIndex: 2 },
+        { agent: "claude-code", paneId: "%100", pid: 1001, windowIndex: 4, paneIndex: 1 },
+      ]);
+
+      const agents = t.getAgents("sess-1");
+      const assistant = agents.find((a) => a.threadId === "assistant")!;
+      const rbOrch    = agents.find((a) => a.threadId === "rb-orch")!;
+      expect(assistant.paneId).toBe("%100");
+      expect(assistant.windowIndex).toBe(4);
+      expect(rbOrch.paneId).toBe("%200");
+      expect(rbOrch.windowIndex).toBe(2);
+    });
+
+    test("claim loop falls back to PID-less watcher when no PID match available", () => {
+      const t = new AgentTracker();
+      // Cold-boot watcher entry — no pid yet (hook hasn't fired).
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "running" }));
+
+      // Scanner emits a pane with a pid that doesn't match anything yet —
+      // the PID-less entry is a fair fallback target.
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%5", pid: 1234, windowIndex: 1, paneIndex: 0 },
+      ]);
+
+      const agents = t.getAgents("sess-1");
+      expect(agents.length).toBe(1);
+      expect(agents[0]!.threadId).toBe("abc");
+      expect(agents[0]!.paneId).toBe("%5");
+    });
+
+    test("claim loop refuses to bind to an entry whose pid disagrees", () => {
+      const t = new AgentTracker();
+      // Watcher resolved pid 5555.
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "abc", status: "running", pid: 5555 }));
+
+      // Scanner sees a different pid (e.g. a freshly-launched second claude
+      // whose hook hasn't fired yet) — must NOT claim the pid 5555 entry.
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%9", pid: 9999, windowIndex: 1, paneIndex: 0 },
+      ]);
+
+      const agents = t.getAgents("sess-1");
+      const watcher = agents.find((a) => a.threadId === "abc")!;
+      // Watcher entry must not have been bound to %9.
+      expect(watcher.paneId).toBeUndefined();
+      // A synthetic should have been minted for the new pane.
+      const synthetic = agents.find((a) => a.paneId === "%9")!;
+      expect(synthetic).toBeDefined();
+      expect(synthetic.pid).toBe(9999);
+    });
+
+    test("getAgents puts rows without windowIndex last", () => {
+      const t = new AgentTracker();
+      // t1 has no pane info; t2 is on window 5.
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "t1", status: "running", ts: 100 }));
+      t.applyEvent(event({ session: "sess-1", agent: "claude-code", threadId: "t2", status: "running", ts: 200 }));
+      t.applyPanePresence("sess-1", [
+        { agent: "claude-code", paneId: "%2", windowIndex: 5, paneIndex: 0 },
+      ]);
+
+      // t1 had no pane match — only t2 got enriched. Pane scanner picks the
+      // first unclaimed entry in iteration order (t1), so t1 gets the pane.
+      // Force the opposite: enrich t2 first by applying pane presence with
+      // both present — t1 alphabetically/insertion-first gets the pane.
+      // Simpler: just check that the watcher entry with windowIndex sorts
+      // before the one without.
+      const agents = t.getAgents("sess-1");
+      const withWin = agents.find((a) => a.windowIndex !== undefined);
+      const without = agents.find((a) => a.windowIndex === undefined);
+      expect(withWin).toBeDefined();
+      expect(without).toBeDefined();
+      const idxWith = agents.indexOf(withWin!);
+      const idxWithout = agents.indexOf(without!);
+      expect(idxWith).toBeLessThan(idxWithout);
+    });
   });
 });

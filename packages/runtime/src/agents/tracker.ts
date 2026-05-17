@@ -3,6 +3,11 @@ import { TERMINAL_STATUSES } from "../contracts/agent";
 
 const MAX_EVENT_TIMESTAMPS = 30;
 const TERMINAL_PRUNE_MS = 5 * 60 * 1000;
+/** Window after a watcher signals SessionEnd during which the pane scanner
+ *  must NOT mint a synthetic for that pane/agent. SessionEnd fires while the
+ *  agent process is still wrapping up — ps shows it for a beat after — so
+ *  without this gate the row reappears as a ghost synthetic for ~5s. */
+const RECENT_END_SUPPRESS_MS = 5_000;
 
 // Pane scans (server/index.ts:1205) run every 3s. A single missed scan can
 // happen when the agent process re-execs (Claude Code compaction, codex
@@ -24,6 +29,19 @@ export function instanceKey(agent: string, threadId?: string): string {
   return threadId ? `${agent}:${threadId}` : agent;
 }
 
+/** Real `process.kill(pid, 0)` — sends signal 0 to probe for existence
+ *  without affecting the target. Returns false when the pid is gone or
+ *  unreachable (ESRCH / EPERM / any other error). */
+function defaultIsPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class AgentTracker {
   // Outer key: session name, inner key: instance key (agent or agent:threadId)
   private instances = new Map<string, Map<string, AgentEvent>>();
@@ -37,9 +55,37 @@ export class AgentTracker {
   // and on every delete path so it can't leak.
   private paneMisses = new Map<string, number>();
   private missThreshold: number;
+  private livenessTimer: ReturnType<typeof setInterval> | null = null;
+  /** Injected for tests so we can simulate a dead pid without forking. */
+  private isPidAlive: (pid: number) => boolean;
+  /** Injected for tests so suppression windows can be advanced without setTimeout. */
+  private now: () => number;
+  /** paneId-keyed suppression: skip creating synthetics for a pane that the
+   *  watcher just removed via SessionEnd. Value is the expiration timestamp.
+   *  Key shape: `${session}\0${agent}\0${paneId}`. */
+  private recentlyEndedPanes = new Map<string, number>();
 
-  constructor(opts: { missThreshold?: number } = {}) {
+  constructor(opts: { missThreshold?: number; isPidAlive?: (pid: number) => boolean; now?: () => number } = {}) {
     this.missThreshold = opts.missThreshold ?? DEFAULT_MISS_THRESHOLD;
+    this.isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
+    this.now = opts.now ?? (() => Date.now());
+  }
+
+  private endSuppressKey(session: string, agent: string, paneId: string): string {
+    return `${session}\0${agent}\0${paneId}`;
+  }
+
+  /** Return true if a synthetic for this pane/agent should be suppressed
+   *  because the watcher recently ended an entry here. Lazily expires. */
+  private isPaneEndSuppressed(session: string, agent: string, paneId: string): boolean {
+    const k = this.endSuppressKey(session, agent, paneId);
+    const exp = this.recentlyEndedPanes.get(k);
+    if (exp === undefined) return false;
+    if (this.now() >= exp) {
+      this.recentlyEndedPanes.delete(k);
+      return false;
+    }
+    return true;
   }
 
   private unseenKey(session: string, key: string): string {
@@ -60,6 +106,15 @@ export class AgentTracker {
     if (event.ended) {
       const sessionInstances = this.instances.get(event.session);
       if (sessionInstances) {
+        // Stash the paneId before deletion so the pane scanner can suppress
+        // a transient synthetic during the agent's exit-cleanup window.
+        const removed = sessionInstances.get(key);
+        if (removed?.paneId) {
+          this.recentlyEndedPanes.set(
+            this.endSuppressKey(event.session, event.agent, removed.paneId),
+            this.now() + RECENT_END_SUPPRESS_MS,
+          );
+        }
         sessionInstances.delete(key);
         this.unseenInstances.delete(this.unseenKey(event.session, key));
         this.clearMissState(event.session, key);
@@ -82,42 +137,82 @@ export class AgentTracker {
       event.paneId = event.paneId ?? prev.paneId;
       event.liveness = event.liveness ?? prev.liveness;
       event.windowName = event.windowName ?? prev.windowName;
+      event.windowIndex = event.windowIndex ?? prev.windowIndex;
+      event.paneIndex = event.paneIndex ?? prev.paneIndex;
+    }
+    // Preserve pid independently of paneId. A watcher event without pid
+    // (e.g. arriving before findChildPid resolves it) would otherwise lose
+    // the value the pane scanner already established, and fall through to
+    // the paneId-only graduation branch below — the very ambiguity the
+    // pid-keyed branch exists to avoid.
+    event.pid = event.pid ?? prev?.pid;
+    // Preserve subagent across PostToolUse-style events that don't re-read sessions/
+    if (event.subagent === undefined && prev?.subagent !== undefined) {
+      event.subagent = prev.subagent;
     }
     // Stamp first-seen timestamp once per instance so getAgents() sort is
     // stable across subsequent status updates.
     event.firstSeenTs = prev?.firstSeenTs ?? event.ts;
     sessionInstances.set(key, event);
 
-    // Clean up the synthetic pane-keyed entry that corresponds to THIS pane.
-    // Previously this loop deleted every same-agent synthetic, which destroyed
-    // sibling synthetics for other panes in the same window. With the watcher
-    // event's paneId, we can target precisely.
+    // Graduate at most ONE synthetic pane-keyed entry — the one that represents
+    // this watcher's pane. Synthetics for OTHER panes belong to other live
+    // claude processes in the same tmux session (e.g. rb-orchestrator,
+    // rb-planner) and must stay until those processes fire their own hooks.
+    // Deleting them indiscriminately produced ~3s flicker as the pane scanner
+    // re-created them on every cycle.
     //
-    // When the watcher provides no paneId (legacy seed-merge path), we count
-    // same-agent synthetics first: only consume if there is exactly one (no
-    // sibling to protect). This preserves the single-pane seed-merge behaviour
-    // without bleeding into the multi-pane case.
-    const sameAgentSynthetics = [...sessionInstances].filter(
-      ([k, ev]) => k !== key && ev.agent === event.agent && k.includes(":pane:"),
-    );
-    const canUnboundMerge = !event.paneId && sameAgentSynthetics.length === 1;
-
-    for (const [k, ev] of sessionInstances) {
-      if (k === key) continue;
-      if (ev.agent !== event.agent) continue;
-      if (!k.includes(":pane:")) continue;
-      const matchesByPane = event.paneId && ev.paneId === event.paneId;
-      if (!matchesByPane && !canUnboundMerge) continue;
-      // Transfer pane info to the watcher entry when it lacks one.
-      if (ev.paneId && !event.paneId) {
-        event.paneId = ev.paneId;
-        event.liveness = ev.liveness;
-        event.windowName = ev.windowName;
+    // Prefer matching by PID — synthetics carry the scanner's pid, this event
+    // carries the watcher's pid, both resolve from the same OS process. PID
+    // match disambiguates when several synthetics share an agent name.
+    // Fall back to paneId match (when we already adopted one), then to
+    // first-with-paneId (cold-boot watcher with no pane info yet).
+    let graduateKey: string | undefined;
+    if (event.pid !== undefined) {
+      for (const [k, ev] of sessionInstances) {
+        if (k === key) continue;
+        if (ev.agent !== event.agent) continue;
+        if (!k.includes(":pane:")) continue;
+        if (ev.pid !== event.pid) continue;
+        event.paneId = event.paneId ?? ev.paneId;
+        event.liveness = event.liveness ?? ev.liveness;
+        event.windowName = event.windowName ?? ev.windowName;
+        event.windowIndex = event.windowIndex ?? ev.windowIndex;
+        event.paneIndex = event.paneIndex ?? ev.paneIndex;
+        graduateKey = k;
+        break;
       }
-      sessionInstances.delete(k);
-      this.unseenInstances.delete(this.unseenKey(event.session, k));
-      this.clearMissState(event.session, k);
-      if (!event.paneId) break; // unbound merge: only consume one synthetic
+    }
+    if (graduateKey === undefined) {
+      for (const [k, ev] of sessionInstances) {
+        if (k === key) continue;
+        if (ev.agent !== event.agent) continue;
+        if (!k.includes(":pane:")) continue;
+        // Two graduation cases:
+        //   1. We have no paneId yet — adopt this synthetic's pane and graduate it.
+        //   2. We already have a paneId — graduate the synthetic whose pane matches.
+        if (ev.paneId && !event.paneId) {
+          // Don't adopt a synthetic whose pid disagrees with this event's pid —
+          // it belongs to a different process.
+          if (event.pid !== undefined && ev.pid !== undefined && ev.pid !== event.pid) continue;
+          event.paneId = ev.paneId;
+          event.liveness = ev.liveness;
+          event.windowName = event.windowName ?? ev.windowName;
+          event.windowIndex = event.windowIndex ?? ev.windowIndex;
+          event.paneIndex = event.paneIndex ?? ev.paneIndex;
+          graduateKey = k;
+          break;
+        }
+        if (event.paneId && ev.paneId === event.paneId) {
+          graduateKey = k;
+          break;
+        }
+      }
+    }
+    if (graduateKey !== undefined) {
+      sessionInstances.delete(graduateKey);
+      this.unseenInstances.delete(this.unseenKey(event.session, graduateKey));
+      this.clearMissState(event.session, graduateKey);
     }
 
     // Track event timestamps
@@ -144,7 +239,10 @@ export class AgentTracker {
     }
   }
 
-  /** Returns the most important agent state for backward compat */
+  /** Returns the most important agent state for backward compat.
+   *  Tie-break (same STATUS_PRIORITY) is by most-recent ts, then firstSeenTs.
+   *  Strict `>` on ties used to pick whichever entry Map iteration enumerated
+   *  first — unstable across server restarts and pruneTerminal cycles. */
   getState(session: string): AgentEvent | null {
     const sessionInstances = this.instances.get(session);
     if (!sessionInstances || sessionInstances.size === 0) return null;
@@ -156,9 +254,35 @@ export class AgentTracker {
       if (p > bestPriority) {
         bestPriority = p;
         best = event;
+        continue;
+      }
+      if (p === bestPriority && best !== null) {
+        if (event.ts > best.ts) {
+          best = event;
+        } else if (event.ts === best.ts && (event.firstSeenTs ?? 0) > (best.firstSeenTs ?? 0)) {
+          best = event;
+        }
       }
     }
     return best;
+  }
+
+  /** O(1) lookup for one specific instance — no scan, no sort. Watcher rows
+   *  resolve by (agent, threadId); synthetics by (agent, paneId). Callers that
+   *  need a single event by primary identifier should reach for this instead
+   *  of `getAgents(session).find(...)`, which sorts the whole list per call. */
+  getEvent(session: string, agent: string, threadId?: string, paneId?: string): AgentEvent | null {
+    const sessionInstances = this.instances.get(session);
+    if (!sessionInstances) return null;
+    if (threadId !== undefined) {
+      const hit = sessionInstances.get(instanceKey(agent, threadId));
+      return hit ?? null;
+    }
+    if (paneId !== undefined) {
+      const hit = sessionInstances.get(`${agent}:pane:${paneId}`);
+      return hit ?? null;
+    }
+    return null;
   }
 
   /** Returns all agent instances for a session, with unseen flag stamped */
@@ -171,7 +295,20 @@ export class AgentTracker {
         const isUnseen = this.unseenInstances.has(this.unseenKey(session, key));
         return isUnseen ? { ...event, unseen: true } : event;
       })
-      .sort((a, b) => (a.firstSeenTs ?? a.ts) - (b.firstSeenTs ?? b.ts));
+      .sort((a, b) => {
+        // Primary: tmux window index so rows align with the status-bar tabs.
+        // Secondary: pane index within a window for stable ordering when
+        // multiple agents share a window. Tertiary: firstSeenTs keeps
+        // watcher-only rows (no pane info yet) and synthetics in arrival
+        // order. Unresolved values sort last via Infinity.
+        const wA = a.windowIndex ?? Infinity;
+        const wB = b.windowIndex ?? Infinity;
+        if (wA !== wB) return wA - wB;
+        const pA = a.paneIndex ?? Infinity;
+        const pB = b.paneIndex ?? Infinity;
+        if (pA !== pB) return pA - pB;
+        return (a.firstSeenTs ?? a.ts) - (b.firstSeenTs ?? b.ts);
+      });
   }
 
   /** Returns recent event timestamps for sparkline rendering */
@@ -194,16 +331,31 @@ export class AgentTracker {
     return true;
   }
 
-  dismiss(session: string, agent: string, threadId?: string): boolean {
+  /** Remove the agent instance the caller is pointing at. Accepts every
+   *  identifier the TUI has access to — threadId for watcher rows, paneId for
+   *  synthetics that never carried one, pid as a tie-breaker when the same
+   *  agent occupies two panes with the same threadId (cloned worktrees,
+   *  replayed sessions). Matching is conjunctive: every supplied field must
+   *  agree with the candidate entry. The first match wins, so callers that
+   *  know paneId can target a specific row without flushing siblings. */
+  dismiss(session: string, agent: string, threadId?: string, paneId?: string, pid?: number): boolean {
     const sessionInstances = this.instances.get(session);
     if (!sessionInstances) return false;
 
-    const key = instanceKey(agent, threadId);
-    const removed = sessionInstances.delete(key);
-    if (!removed) return false;
+    let matchKey: string | undefined;
+    for (const [key, ev] of sessionInstances) {
+      if (ev.agent !== agent) continue;
+      if (threadId !== undefined && ev.threadId !== threadId) continue;
+      if (paneId !== undefined && ev.paneId !== paneId) continue;
+      if (pid !== undefined && ev.pid !== pid) continue;
+      matchKey = key;
+      break;
+    }
+    if (matchKey === undefined) return false;
 
-    this.unseenInstances.delete(this.unseenKey(session, key));
-    this.clearMissState(session, key);
+    sessionInstances.delete(matchKey);
+    this.unseenInstances.delete(this.unseenKey(session, matchKey));
+    this.clearMissState(session, matchKey);
     if (sessionInstances.size === 0) {
       this.instances.delete(session);
     }
@@ -245,6 +397,43 @@ export class AgentTracker {
         this.instances.delete(session);
       }
     }
+  }
+
+  /**
+   * Run one liveness sweep: for every tracked instance with a `pid`, check
+   * whether the process is still alive. If not, mark `liveness: "exited"`
+   * so the rest of the system (pane miss counter, terminal prune) can act.
+   *
+   * Exposed for tests; the timer in `startLivenessCheck` just calls this on
+   * a 5s interval. Returns true if anything changed.
+   */
+  runLivenessSweepOnce(): boolean {
+    let changed = false;
+    for (const sessionInstances of this.instances.values()) {
+      for (const event of sessionInstances.values()) {
+        if (event.pid == null) continue;
+        if (event.liveness === "exited") continue;
+        if (TERMINAL_STATUSES.has(event.status)) continue;
+        if (!this.isPidAlive(event.pid)) {
+          event.liveness = "exited";
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
+  /** Start the periodic liveness check. Caller is responsible for stopLivenessCheck(). */
+  startLivenessCheck(intervalMs = 5_000): void {
+    if (this.livenessTimer != null) return;
+    this.livenessTimer = setInterval(() => this.runLivenessSweepOnce(), intervalMs);
+  }
+
+  /** Stop the periodic liveness check. Safe to call when not started. */
+  stopLivenessCheck(): void {
+    if (this.livenessTimer == null) return;
+    clearInterval(this.livenessTimer);
+    this.livenessTimer = null;
   }
 
   isUnseen(session: string): boolean {
@@ -384,35 +573,71 @@ export class AgentTracker {
         this.instances.set(session, sessionInstances);
       }
 
-      // Find an existing entry for this agent that hasn't already been claimed.
-      // Prefer watcher-sourced entries (no ":pane:" in key) over synthetics.
+      // Find an unclaimed alive watcher-sourced entry for this agent.
+      // Skip synthetics: each synthetic is pinned to a specific paneId in its
+      // key, and claiming one for a different pane silently rebinds it,
+      // producing entry-count drift when multiple panes share an agent.
+      // Skip entries the liveness sweep marked dead — resurrecting them
+      // flickers the row against the sweep at every broadcast.
+      //
+      // Disambiguate by PID when available. Watcher entries resolve pid via
+      // ancestor walk on hook fire; the pane scanner resolves the same pid
+      // via descendant walk of the pane's shell. When both agree, the claim
+      // is unambiguous even with multiple panes sharing an agent name
+      // (assistant + rb-orchestrator + rb-planner all "claude-code").
+      // Without this guard, the loop fell back to Map iteration order and
+      // silently crisscrossed watcher entries with the wrong panes.
       let bestKey: string | undefined;
       let bestEvent: AgentEvent | undefined;
+      let fallbackKey: string | undefined;
+      let fallbackEvent: AgentEvent | undefined;
       for (const [k, ev] of sessionInstances) {
         if (ev.agent !== pa.agent) continue;
         if (claimedKeys.has(k)) continue;
-        // Don't steal another pane's synthetic. A :pane:-keyed entry bound
-        // to a different paneId belongs to a sibling pane that is alive
-        // right now (this scan would have unclaimed it in step 1 otherwise).
-        // Leave it alone so the sibling keeps its identity.
-        if (k.includes(":pane:") && ev.paneId && ev.paneId !== pa.paneId) continue;
-        if (!bestEvent || !k.includes(":pane:")) {
+        if (ev.liveness === "exited") continue;
+        if (k.includes(":pane:")) continue;
+        if (pa.pid !== undefined && ev.pid === pa.pid) {
+          // Strict PID match — done.
           bestKey = k;
           bestEvent = ev;
-          if (!k.includes(":pane:")) break;
+          break;
         }
+        // Fallback only when the entry has no pid yet (cold-boot watcher).
+        // An entry with a different pid belongs to a different process —
+        // never claim it from this pane.
+        if (ev.pid === undefined && fallbackEvent === undefined) {
+          fallbackKey = k;
+          fallbackEvent = ev;
+        }
+      }
+      if (!bestEvent) {
+        bestKey = fallbackKey;
+        bestEvent = fallbackEvent;
       }
 
       if (bestEvent && bestKey) {
         claimedKeys.add(bestKey);
-        const wasDifferent = bestEvent.paneId !== pa.paneId || bestEvent.liveness !== "alive" || bestEvent.windowName !== pa.windowName;
+        const wasDifferent =
+          bestEvent.paneId !== pa.paneId ||
+          bestEvent.liveness !== "alive" ||
+          bestEvent.windowName !== pa.windowName ||
+          bestEvent.windowIndex !== pa.windowIndex ||
+          bestEvent.paneIndex !== pa.paneIndex;
         bestEvent.paneId = pa.paneId;
         bestEvent.liveness = "alive";
         bestEvent.windowName = pa.windowName;
+        bestEvent.windowIndex = pa.windowIndex;
+        bestEvent.paneIndex = pa.paneIndex;
         // Resolved — any pending miss for this entry is no longer relevant.
         this.clearMissState(session, bestKey);
         if (wasDifferent) changed = true;
 
+        continue;
+      }
+
+      // Pane just had a SessionEnd — ps still shows the agent for a beat
+      // during exit cleanup. Don't mint a ghost synthetic for that window.
+      if (this.isPaneEndSuppressed(session, pa.agent, pa.paneId)) {
         continue;
       }
 
@@ -424,18 +649,30 @@ export class AgentTracker {
           agent: pa.agent,
           session,
           status: "idle",
-          ts: Date.now(),
+          ts: this.now(),
           paneId: pa.paneId,
           windowName: pa.windowName,
           liveness: "alive",
+          windowIndex: pa.windowIndex,
+          paneIndex: pa.paneIndex,
+          pid: pa.pid,
         });
         changed = true;
       } else {
         const existing = sessionInstances.get(syntheticKey)!;
-        const wasDifferent = existing.paneId !== pa.paneId || existing.liveness !== "alive" || existing.windowName !== pa.windowName;
+        const wasDifferent =
+          existing.paneId !== pa.paneId ||
+          existing.liveness !== "alive" ||
+          existing.windowName !== pa.windowName ||
+          existing.windowIndex !== pa.windowIndex ||
+          existing.paneIndex !== pa.paneIndex ||
+          existing.pid !== pa.pid;
         existing.paneId = pa.paneId;
         existing.liveness = "alive";
         existing.windowName = pa.windowName;
+        existing.windowIndex = pa.windowIndex;
+        existing.paneIndex = pa.paneIndex;
+        existing.pid = pa.pid;
         this.clearMissState(session, syntheticKey);
         if (wasDifferent) changed = true;
       }
