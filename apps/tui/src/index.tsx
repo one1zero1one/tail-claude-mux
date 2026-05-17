@@ -1539,6 +1539,14 @@ function PaneRowItem(props: PaneRowItemProps) {
     return raw.length > 18 ? raw.slice(0, 17) + "…" : raw;
   };
 
+  const subagent = () => props.pane.agent?.subagent;
+
+  const truncatedSubagent = () => {
+    const raw = subagent();
+    if (!raw) return "";
+    return raw.length > 16 ? raw.slice(0, 15) + "…" : raw;
+  };
+
   return (
     <box flexDirection="column" flexShrink={0} onMouseDown={() => {
       appendFileSync("/tmp/tcm-tui-agent-click.log",
@@ -1547,28 +1555,38 @@ function PaneRowItem(props: PaneRowItemProps) {
       props.onFocusPane();
     }}>
       <box
-        flexDirection="row"
+        flexDirection="column"
         backgroundColor={bgColor()}
-        paddingLeft={2}
-        paddingRight={1}
       >
-        <text flexShrink={0}>
-          <span style={{ fg: glyphColor() }}>{status().glyph}</span>
-          <span>{" "}</span>
-        </text>
-        <text flexShrink={0}>
-          <span style={{ fg: P().overlay0, attributes: DIM }}>{
-            props.pane.agent ? "cc " : "sh "
-          }</span>
-        </text>
-        <text flexGrow={1} truncate>
-          <span style={{
-            fg: isUnseen()
-              ? P().teal
-              : (props.isKeyboardFocused ? P().text : P().subtext1),
-            attributes: props.isKeyboardFocused ? BOLD : undefined,
-          }}>{truncatedLabel()}</span>
-        </text>
+        <box flexDirection="row" paddingLeft={2} paddingRight={1}>
+          <text flexShrink={0}>
+            <span style={{ fg: glyphColor() }}>{status().glyph}</span>
+            <span>{" "}</span>
+          </text>
+          <text flexShrink={0}>
+            <span style={{ fg: P().overlay0, attributes: DIM }}>{
+              props.pane.agent ? "cc " : "sh "
+            }</span>
+          </text>
+          <text flexGrow={1} truncate>
+            <span style={{
+              fg: isUnseen()
+                ? P().teal
+                : (props.isKeyboardFocused ? P().text : P().subtext1),
+              attributes: props.isKeyboardFocused ? BOLD : undefined,
+            }}>{truncatedLabel()}</span>
+          </text>
+        </box>
+        <Show when={subagent()}>
+          <box flexDirection="row" paddingLeft={6} paddingRight={1}>
+            <text flexShrink={0}>
+              <span style={{ fg: P().overlay0, attributes: DIM }}>{"↳ "}</span>
+            </text>
+            <text flexGrow={1} truncate>
+              <span style={{ fg: P().mauve, attributes: DIM }}>{truncatedSubagent()}</span>
+            </text>
+          </box>
+        </Show>
       </box>
     </box>
   );
