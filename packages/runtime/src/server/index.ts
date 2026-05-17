@@ -1508,7 +1508,14 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     for (const [session, scans] of allScans) {
       const presence = scans
         .filter((s) => s.agent)
-        .map((s) => ({ agent: s.agent!, paneId: s.paneId, windowName: s.windowName }));
+        .map((s) => ({
+          agent: s.agent!,
+          paneId: s.paneId,
+          windowName: s.windowName,
+          pid: s.agentPid,
+          windowIndex: s.windowIndex,
+          paneIndex: s.paneIndex,
+        }));
       if (tracker.applyPanePresence(session, presence)) changed = true;
     }
 
