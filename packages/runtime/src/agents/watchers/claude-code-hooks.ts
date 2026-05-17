@@ -201,8 +201,12 @@ export function toolDescription(toolName: string | undefined, toolInput: Record<
       if (pattern) return `Searching ${truncateToWidth(pattern, 30)}`;
       return "Searching";
     }
-    case "Agent": {
+    case "Agent":
+    case "Task": {
       const desc = safeStr(input.description);
+      const subagentType = safeStr(input.subagent_type);
+      if (subagentType && desc) return `${subagentType} · ${truncateToWidth(desc, 28)}`;
+      if (subagentType) return subagentType;
       if (desc) return truncateToWidth(desc, 40);
       return "Agent";
     }

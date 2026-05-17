@@ -7,6 +7,7 @@ import type { AgentEvent } from "../contracts/agent";
 import type { AgentWatcher, AgentWatcherContext } from "../contracts/agent-watcher";
 import { isHookReceiver } from "../contracts/agent-watcher";
 import { parseHookPayload } from "../contracts/parse-hook-payload";
+import { truncateToWidth } from "../text";
 import { AgentTracker } from "../agents/tracker";
 import { SessionOrder } from "./session-order";
 import { SessionMetadataStore } from "./metadata-store";
@@ -443,7 +444,12 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
   function deriveLogEntries(event: AgentEvent): Array<{ message: string; tone?: import("../shared").MetadataTone; source?: string }> {
     if (!event.threadId) return [];
     const last = lastSeenByThread.get(event.threadId) ?? {};
-    const source = `${agentCode(event.agent)} ${shortThreadIdSuffix(event.threadId)}`.trim();
+    // Prefer the human threadName over the short threadId hash when one is set.
+    // Truncated to 12 cells so the eyebrow stays readable on narrow sidebars.
+    const sourceTag = event.threadName
+      ? truncateToWidth(event.threadName, 12)
+      : shortThreadIdSuffix(event.threadId);
+    const source = `${agentCode(event.agent)} ${sourceTag}`.trim();
     const out: Array<{ message: string; tone?: import("../shared").MetadataTone; source?: string }> = [];
 
     // Emit order: thread name (least recent) → tool (mid) → status transition
