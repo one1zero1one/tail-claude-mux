@@ -4,6 +4,11 @@ export interface MuxSessionInfo {
   readonly name: string;
   readonly createdAt: number;
   readonly dir: string;
+  /** Active-pane cwd for every window in this session, in tmux window order.
+   *  Lets dir→session resolvers match any window's cwd, not just the
+   *  currently-focused window's. Empty/absent on providers that can't
+   *  enumerate windows (back-compat fallback: consumers should use `dir`). */
+  readonly dirs?: readonly string[];
   readonly windows: number;
 }
 

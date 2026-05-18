@@ -479,19 +479,26 @@ export class TmuxClient {
   }
 
   /**
-   * Get the active pane's cwd for every session in one `list-panes -a` call.
-   * Uses tmux's -f filter to get only non-sidebar panes in active windows.
-   * First hit per session wins (tmux lists active pane first).
+   * Get the active pane's cwd for **every window** in every session, grouped
+   * by session. One entry per window — tmux's `pane_active` filter selects
+   * exactly the active pane within each window, and we exclude sidebar panes
+   * (both the @tcm-sidebar pane-option and the pane_title back-compat path).
    *
-   * Sidebar exclusion uses the @tcm-sidebar pane-local option (stable) and
-   * falls back to pane_title equality (backward compat for sidebars spawned
-   * before the marker was introduced).
+   * Used by the dir→session resolver so it can map cwds from windows that
+   * aren't currently focused. The previous implementation filtered on
+   * `window_active`, which produced one cwd per session — the focused
+   * window's — and silently failed to resolve hooks from background windows.
+   *
+   * For the "single primary dir per session" API consumers should use the
+   * first entry of the array (it corresponds to the active window, since
+   * `list-panes -a` enumerates panes in window order with the active one
+   * first in each window).
    */
-  getActiveSessionDirs(): Map<string, string> {
-    const dirs = new Map<string, string>();
+  getActiveSessionDirs(): Map<string, string[]> {
+    const dirs = new Map<string, string[]>();
     const { stdout } = this.run([
       "list-panes", "-a",
-      "-f", "#{&&:#{window_active},#{&&:#{!=:#{@tcm-sidebar},1},#{!=:#{pane_title},tcm-sidebar}}}",
+      "-f", "#{&&:#{pane_active},#{&&:#{!=:#{@tcm-sidebar},1},#{!=:#{pane_title},tcm-sidebar}}}",
       "-F", `#{session_name}${SEP}#{pane_current_path}`,
     ]);
     if (!stdout) return dirs;
@@ -501,7 +508,9 @@ export class TmuxClient {
       if (sep < 0) continue;
       const session = line.slice(0, sep);
       const cwd = line.slice(sep + 1);
-      if (!dirs.has(session)) dirs.set(session, cwd);
+      const arr = dirs.get(session);
+      if (arr) arr.push(cwd);
+      else dirs.set(session, [cwd]);
     }
     return dirs;
   }

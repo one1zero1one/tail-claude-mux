@@ -406,7 +406,14 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     if (dirSessionCache && now - dirSessionCacheTs < DIR_CACHE_TTL) return dirSessionCache;
     const map = new Map<string, string>();
     for (const s of mux.listSessions()) {
-      if (s.dir) map.set(s.dir, s.name);
+      // Prefer the per-window list when the provider supplies it (tmux); fall
+      // back to the single `dir` field otherwise. Each window's active-pane
+      // cwd gets its own entry so resolveSession() can prefix-match hooks
+      // from windows that aren't currently focused.
+      const dirs = s.dirs?.length ? s.dirs : (s.dir ? [s.dir] : []);
+      for (const dir of dirs) {
+        if (!map.has(dir)) map.set(dir, s.name);
+      }
     }
     dirSessionCache = map;
     dirSessionCacheTs = now;
