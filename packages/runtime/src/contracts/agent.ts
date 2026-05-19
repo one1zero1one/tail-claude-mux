@@ -43,6 +43,11 @@ export interface AgentEvent {
    *  Sourced from ~/.claude/sessions/<pid>.json `agent` field; undefined when the
    *  parent thread is in control. */
   subagent?: string;
+  /** Set when the agent has fired a user-attention notification (push_notification
+   *  type — Claude Code's "Push when actions required" / "Push when Claude decides").
+   *  Orthogonal to status: a running agent can also have attention=true.
+   *  Cleared when the user re-engages (next UserPromptSubmit). */
+  attention?: boolean;
   /** Signals the tracker to remove this instance immediately instead of holding
    *  it in the terminal-prune window. Set by watchers when the underlying
    *  agent session has definitively ended (e.g. SessionEnd hook). */

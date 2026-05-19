@@ -27,6 +27,7 @@ import {
   SEV_ERROR,
   SEV_IDLE_DOT,
   SEV_SHELL_RUNNING,
+  SEV_ATTENTION,
   // SEV_WAITING (nf-md-bell-alert) doubles as the catch-all system-tag glyph
   // when a row's source matches /^\[.+\]$/ — see ActivityZone Rule 0.
   BRAND_CLAWD,
@@ -1576,6 +1577,11 @@ function PaneRowItem(props: PaneRowItemProps) {
               attributes: props.isKeyboardFocused ? BOLD : undefined,
             }}>{truncatedLabel()}</span>
           </text>
+          <Show when={props.pane.agent?.attention}>
+            <text flexShrink={0}>
+              <span style={{ fg: P().peach }}>{" "}{SEV_ATTENTION}</span>
+            </text>
+          </Show>
         </box>
         <Show when={subagent()}>
           <box flexDirection="row" paddingLeft={6} paddingRight={1}>

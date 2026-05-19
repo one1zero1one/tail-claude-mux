@@ -150,6 +150,12 @@ export class AgentTracker {
     if (event.subagent === undefined && prev?.subagent !== undefined) {
       event.subagent = prev.subagent;
     }
+    // Preserve attention across events that don't touch it. The watcher's
+    // push_notification path and UserPromptSubmit clear-path both set
+    // attention explicitly; everything else should inherit the prior value.
+    if (event.attention === undefined && prev?.attention !== undefined) {
+      event.attention = prev.attention;
+    }
     // Stamp first-seen timestamp once per instance so getAgents() sort is
     // stable across subsequent status updates.
     event.firstSeenTs = prev?.firstSeenTs ?? event.ts;

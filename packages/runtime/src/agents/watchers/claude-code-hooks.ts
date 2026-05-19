@@ -164,6 +164,9 @@ interface ThreadState {
   /** Active subagent name from sessions/<pid>.json `agent` field, or undefined
    *  when the parent CC thread is in control. */
   subagent?: string;
+  /** Sticky "user attention requested" bit. Set when CC fires a Notification
+   *  with type=push_notification, cleared on the next UserPromptSubmit. */
+  attention?: boolean;
 }
 
 const STALE_MS = 5 * 60 * 1000;
@@ -288,7 +291,15 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
 
     // Resolve status: Notification branches on subtype, others use the flat map
     const newStatus = this.resolveStatus(payload);
-    if (!newStatus) { dbg("hook", "ignored", { event: payload.event, notification_type: payload.notification_type }); return; }
+    // push_notification has no status mapping but should still set the
+    // "attention" bit on the existing thread state. Detect it here so we
+    // proceed past the null-status early return.
+    const isPushNotification =
+      payload.event === "Notification" && payload.notification_type === "push_notification";
+    if (!newStatus && !isPushNotification) {
+      dbg("hook", "ignored", { event: payload.event, notification_type: payload.notification_type });
+      return;
+    }
 
     const session = this.ctx.resolveSession(payload.cwd);
     if (!session) { dbg("hook", "no-session", { cwd: payload.cwd }); return; }
@@ -344,11 +355,30 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
     this.refreshSubagent(threadId, state);
 
 
+    // push_notification arrived — set the orthogonal "attention" bit and
+    // emit. Status is left untouched (the push fires for both "actions
+    // required" and "Claude decides", so it's not a reliable status signal).
+    if (isPushNotification) {
+      if (state.attention) {
+        dbg("hook", "dedup", { threadId: threadId.slice(0, 8), attention: true });
+        return;
+      }
+      state.attention = true;
+      dbg("hook", "emit", { threadId: threadId.slice(0, 8), session, attention: true });
+      this.emit(threadId, state, session);
+      return;
+    }
+
+    // UserPromptSubmit means the user actively re-engaged — clear attention.
+    if (payload.event === "UserPromptSubmit" && state.attention) {
+      state.attention = false;
+    }
+
     // SessionEnd must bypass the dedup check below: a prior Stop event
     // already set status=done, so the dedup path would otherwise swallow
     // the end signal and leave a ghost entry until the 5-min prune.
     if (payload.event === "SessionEnd") {
-      state.status = newStatus;
+      state.status = newStatus!;
       state.lastToolDescription = undefined;
       dbg("hook", "emit-ended", { threadId: threadId.slice(0, 8), session });
       this.emit(threadId, state, session, { ended: true });
@@ -373,7 +403,7 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
       return;
     }
 
-    state.status = newStatus;
+    state.status = newStatus!;
     dbg("hook", "emit", { threadId: threadId.slice(0, 8), session, status: newStatus, tool: state.lastToolDescription });
     this.emit(threadId, state, session);
   }
@@ -405,6 +435,7 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
       toolDescription: state.lastToolDescription,
       pid: state.pid,
       subagent: state.subagent,
+      attention: state.attention,
       ...(extras?.ended ? { ended: true } : {}),
     });
   }
