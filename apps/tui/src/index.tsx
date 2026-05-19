@@ -867,6 +867,11 @@ function App() {
     if (LOCK_TO_LOCAL && startupSessionName && name !== startupSessionName) return;
     _setFocusedSession(name);
   };
+  // Seed focused to the local session immediately so the top section renders
+  // for sidebars that aren't this server's "active" view. Without this, the
+  // server's first broadcast carries focusedSession=<some-other-session>,
+  // LOCK_TO_LOCAL rejects it, and focusedSession sits at null forever.
+  if (LOCK_TO_LOCAL && startupSessionName) _setFocusedSession(startupSessionName);
 
   const focusedData = createMemo(() =>
     sessions.find((s) => s.name === focusedSession()) ?? null,
