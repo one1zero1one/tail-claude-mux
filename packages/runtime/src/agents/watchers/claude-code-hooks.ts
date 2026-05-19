@@ -567,6 +567,9 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
 
         if (latestStatus === "idle" || TERMINAL_STATUSES.has(latestStatus)) continue;
 
+        // Skip claude-agent-sdk Warmup transcripts (auto-spawned per run, not real sessions)
+        if (threadName === "Warmup") continue;
+
         const session = this.ctx?.resolveSession(projectDir);
         if (!session) continue;
 
@@ -633,6 +636,13 @@ export class ClaudeCodeHookAdapter implements AgentWatcher, HookReceiver {
       }
 
       if (threadName && this.ctx) {
+        // claude-agent-sdk Warmup transcripts — drop entirely
+        if (threadName === "Warmup") {
+          const session = this.ctx.resolveSession(state.projectDir);
+          if (session) this.emit(threadId, state, session, { ended: true });
+          this.threads.delete(threadId);
+          return;
+        }
         state.threadName = threadName;
         // Re-emit with the resolved name
         const session = this.ctx.resolveSession(state.projectDir);
