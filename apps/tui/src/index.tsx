@@ -69,6 +69,14 @@ function detectMuxContext(): MuxContext {
 
 const muxCtx = detectMuxContext();
 
+/** Read a tmux user option (`@…`). Returns trimmed value or empty string on miss. */
+function readTmuxOption(name: string): string {
+  if (muxCtx.type !== "tmux") return "";
+  const res = Bun.spawnSync(["tmux", "show-option", "-gv", name], { stdout: "pipe", stderr: "pipe" });
+  if (res.exitCode !== 0) return "";
+  return new TextDecoder().decode(res.stdout).trim();
+}
+
 const SPINNERS = SEV_WORKING_SPINNER;
 const BOLD = TextAttributes.BOLD;
 const DIM = TextAttributes.DIM;
@@ -862,7 +870,10 @@ function App() {
   // multi-monitor / Ghostty-per-session setups don't sync cursors with each
   // other. setFocusedSession silently rejects updates that try to move focus
   // off the local session.
-  const LOCK_TO_LOCAL = true;
+  // Per-host config via tmux user option. Default true preserves laptop UX.
+  // Set `set -g @tcm-lock-to-local 0` in .tmux.conf to enable rolodex + click-
+  // to-switch on hosts where AeroSpace-style hotkey switching isn't available.
+  const LOCK_TO_LOCAL = readTmuxOption("@tcm-lock-to-local") !== "0";
   const setFocusedSession = (name: string | null) => {
     if (LOCK_TO_LOCAL && startupSessionName && name !== startupSessionName) return;
     _setFocusedSession(name);
