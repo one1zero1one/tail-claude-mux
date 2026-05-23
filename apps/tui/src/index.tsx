@@ -237,6 +237,10 @@ function OtherSessionRow(props: {
   palette: ThemePalette;
   paneFocused: boolean;
   spinIdx: Accessor<number>;
+  /** Optional — when true, render with a subtle bg highlight. */
+  isFocused?: boolean;
+  /** Optional — when set, the row becomes clickable and fires this on MouseDown. */
+  onSelect?: () => void;
 }) {
   const P = () => props.palette;
 
@@ -282,9 +286,16 @@ function OtherSessionRow(props: {
   };
 
   return (
-    <box flexDirection="row" paddingLeft={1} paddingRight={1} height={1}>
+    <box
+      flexDirection="row"
+      paddingLeft={1}
+      paddingRight={1}
+      height={1}
+      backgroundColor={props.isFocused ? P().surface1 : undefined}
+      onMouseDown={props.onSelect}
+    >
       <text style={{ fg: statusColor() }} flexShrink={0}>{statusIcon() || " "}{" "}</text>
-      <text style={{ fg: nameFg() }} flexShrink={1}>{truncName(12)}</text>
+      <text style={{ fg: nameFg(), attributes: props.isFocused ? BOLD : undefined }} flexShrink={1}>{truncName(12)}</text>
       <text style={{ fg: dimFg() }} flexGrow={1}>{" "}</text>
       <text style={{ fg: dimFg() }} flexShrink={0}>
         {String(props.session.agents.length)}
@@ -852,6 +863,12 @@ function App() {
   // --- Modal state ---
   const [modal, setModal] = createSignal<"none" | "help">("none");
 
+  // --- Condensed (overview) mode: every session as a single OtherSessionRow,
+  //     focused one bg-highlighted. Toggled with 'c'. Hides rolodex + focused
+  //     card + activity zone; useful when you only care about per-session
+  //     rolled-up status across many sessions. ---
+  const [condensed, setCondensed] = createSignal(false);
+
   // --- Flash message (brief feedback after actions like refresh) ---
   const [flashMessage, setFlashMessage] = createSignal<string | null>(null);
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1236,6 +1253,10 @@ function App() {
       case "?":
         setModal("help");
         break;
+      case "c":
+        setCondensed((v) => !v);
+        flash(condensed() ? "condensed" : "expanded");
+        break;
     }
   });
 
@@ -1254,7 +1275,31 @@ function App() {
         </text>
       </box>
 
+      {/* Condensed (overview) mode — every session as a 1-line OtherSessionRow,
+          focused one bg-highlighted, click to switch. Toggled with 'c'. */}
+      <Show when={condensed()}>
+        <box flexDirection="column" flexGrow={1} flexShrink={1} paddingTop={1}>
+          <For each={sessions}>
+            {(session) => (
+              <OtherSessionRow
+                session={session}
+                palette={P()}
+                paneFocused={paneFocused()}
+                spinIdx={spinIdx}
+                isFocused={session.name === focusedSession()}
+                onSelect={() => {
+                  setFocusedSession(session.name);
+                  send({ type: "focus-session", name: session.name });
+                  switchToSession(session.name);
+                }}
+              />
+            )}
+          </For>
+        </box>
+      </Show>
+
       {/* Session rolodex — focused card pinned at center, neighbors above/below */}
+      <Show when={!condensed()}>
       <box flexDirection="column" flexGrow={1} flexShrink={1} paddingTop={1}>
         {/* Sessions above focused — bottom-aligned so nearest is adjacent.
             Hidden in LOCK_TO_LOCAL mode (no rolodex, focused at top). */}
@@ -1377,15 +1422,19 @@ function App() {
         </box>
         </Show>
       </box>
+      </Show>
 
-      {/* Activity zone — fixed-height structural band below the rolodex. */}
-      <ActivityZone
-        focusedSession={focusedData()}
-        palette={P()}
-        paneFocused={paneFocused()}
-        cap={renderer.terminalHeight < 30 ? 5 : 7}
-        termWidth={renderer.terminalWidth}
-      />
+      {/* Activity zone — fixed-height structural band below the rolodex.
+          Hidden in condensed mode (truly minimal overview). */}
+      <Show when={!condensed()}>
+        <ActivityZone
+          focusedSession={focusedData()}
+          palette={P()}
+          paneFocused={paneFocused()}
+          cap={renderer.terminalHeight < 30 ? 5 : 7}
+          termWidth={renderer.terminalWidth}
+        />
+      </Show>
 
       {/* Footer */}
       {(() => {
@@ -1400,6 +1449,9 @@ function App() {
               <span style={{ fg: labelFg() }}>{"· "}</span>
               <span style={{ fg: keyFg() }}>{"r"}</span>
               <span style={{ fg: labelFg() }}>{" refresh "}</span>
+              <span style={{ fg: labelFg() }}>{"· "}</span>
+              <span style={{ fg: keyFg() }}>{"c"}</span>
+              <span style={{ fg: labelFg() }}>{" condense "}</span>
               <span style={{ fg: labelFg() }}>{"· "}</span>
               <span style={{ fg: keyFg() }}>{"?"}</span>
               <span style={{ fg: labelFg() }}>{" help"}</span>
@@ -1432,6 +1484,7 @@ function App() {
               ["j/k", "navigate panes"],
               ["↩", "focus pane"],
               ["r", "refresh"],
+              ["c", "condense / expand"],
               ["?", "this help"],
               ["q", "quit"],
             ] as const).map(([k, v]) => (
