@@ -263,7 +263,14 @@ function OtherSessionRow(props: {
     return SEV_STOPPED;
   };
 
+  // Unseen = a `done` or `waiting` event landed while the session wasn't
+  // attached. Survives until you visit the session. SessionCard/PaneRow
+  // already tint teal for this; we mirror that here so the compact strip and
+  // condensed mode also carry the "things happened while you were away" cue.
+  const isUnseen = () => props.session.unseen === true;
+
   const statusColor = () => {
+    if (isUnseen()) return P().teal;
     const l = label();
     if (l === "working") return P().blue;
     if (l === "waiting") return P().yellow;
@@ -273,7 +280,9 @@ function OtherSessionRow(props: {
   };
 
   const dimFg = () => props.paneFocused ? P().overlay1 : P().surface2;
-  const nameFg = () => props.paneFocused ? P().subtext0 : P().overlay0;
+  const nameFg = () => isUnseen()
+    ? P().teal
+    : (props.paneFocused ? P().subtext0 : P().overlay0);
 
   const truncName = (max: number) => {
     const n = props.session.name;
@@ -295,7 +304,7 @@ function OtherSessionRow(props: {
       onMouseDown={props.onSelect}
     >
       <text style={{ fg: statusColor() }} flexShrink={0}>{statusIcon() || " "}{" "}</text>
-      <text style={{ fg: nameFg(), attributes: props.isFocused ? BOLD : undefined }} flexShrink={1}>{truncName(12)}</text>
+      <text style={{ fg: nameFg(), attributes: (props.isFocused || isUnseen()) ? BOLD : undefined }} flexShrink={1}>{truncName(12)}</text>
       <text style={{ fg: dimFg() }} flexGrow={1}>{" "}</text>
       <text style={{ fg: dimFg() }} flexShrink={0}>
         {String(props.session.agents.length)}
