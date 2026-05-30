@@ -866,6 +866,9 @@ function App() {
 
   // --- Pane focus: does this terminal pane have focus? ---
   const [paneFocused, setPaneFocused] = createSignal(false);
+  // The work pane (tmux window) the user is currently in. Drives the bright
+  // "current" colour on its agent row, mirroring the active tab in the bar.
+  const [currentPaneId, setCurrentPaneId] = createSignal<string | null>(null);
 
   const [focusedAgentIdx, setFocusedAgentIdx] = createSignal(0);
 
@@ -1166,6 +1169,9 @@ function App() {
                 if (isFocused || Date.now() >= focusSuppressUntil) {
                   setPaneFocused(isFocused);
                 }
+                // Remember the focused WORK pane (ignore the sidebar's own
+                // pane) so its agent row renders bright/current.
+                if (!isFocused) setCurrentPaneId(msg.paneId);
               }
             } else if (msg.type === "re-identify") {
               reIdentify();
@@ -1366,6 +1372,7 @@ function App() {
                 statusColors={S}
                 onSelect={() => switchToSession(data().name)}
                 focusedAgentIdx={focusedAgentIdx}
+                currentPaneId={currentPaneId}
                 onPaneFocus={(pane) => {
                   appendFileSync("/tmp/tcm-tui-agent-click.log",
                     `[${new Date().toISOString()}] sending focus-pane paneId=${pane.paneId} agent=${pane.agent?.agent ?? "(none)"}\n`);
@@ -1582,6 +1589,8 @@ interface PaneRowItemProps {
   palette: Accessor<ThemePalette>;
   spinIdx: Accessor<number>;
   isKeyboardFocused: boolean;
+  /** True when this row's pane is the tmux window the user is focused on. */
+  isCurrentWindow: boolean;
   onFocusPane: () => void;
 }
 
@@ -1593,8 +1602,14 @@ function PaneRowItem(props: PaneRowItemProps) {
 
   const status = () => paneStatus(props.pane, props.spinIdx(), P());
 
-  // Unseen recolors the glyph to teal; the shape stays whatever it was.
-  const glyphColor = () => (isUnseen() ? P().teal : status().color);
+  // Colour = attention (mirrors the bottom tmux bar): the window you're in is
+  // bright, a window that changed while you were away is red, everything else
+  // is muted. The glyph SHAPE still carries the reason (spinner/bell/check/
+  // stop/alert) — only its colour reflects seen-state.
+  const glyphColor = () =>
+    props.isCurrentWindow ? P().text
+    : isUnseen()          ? P().red
+    :                       P().overlay0;
 
   const triggerFlash = () => {
     setIsFlash(true);
@@ -1649,10 +1664,10 @@ function PaneRowItem(props: PaneRowItemProps) {
           </text>
           <text flexGrow={1} truncate>
             <span style={{
-              fg: isUnseen()
-                ? P().teal
-                : (props.isKeyboardFocused ? P().text : P().subtext1),
-              attributes: props.isKeyboardFocused ? BOLD : undefined,
+              fg: (props.isCurrentWindow || props.isKeyboardFocused)
+                ? P().text
+                : (isUnseen() ? P().red : P().subtext1),
+              attributes: (props.isCurrentWindow || props.isKeyboardFocused) ? BOLD : undefined,
             }}>{truncatedLabel()}</span>
           </text>
           <Show when={props.pane.agent?.attention}>
@@ -1689,6 +1704,8 @@ interface SessionCardProps {
   onSelect: () => void;
   focusedAgentIdx: Accessor<number>;
   onPaneFocus: (pane: PaneRow) => void;
+  // Only the focused (expanded) card renders agent rows, so only it needs this.
+  currentPaneId?: Accessor<string | null>;
 }
 
 function SessionCard(props: SessionCardProps) {
@@ -1893,6 +1910,7 @@ function SessionCard(props: SessionCardProps) {
                           palette={() => P()}
                           spinIdx={props.spinIdx}
                           isKeyboardFocused={flatIndex(windowId, i()) === props.focusedAgentIdx()}
+                          isCurrentWindow={props.currentPaneId?.() === pane.paneId}
                           onFocusPane={() => props.onPaneFocus(pane)}
                         />
                       )}

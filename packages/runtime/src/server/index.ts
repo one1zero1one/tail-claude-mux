@@ -1817,6 +1817,9 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
           if (paneId) {
             const msg: import("../shared").PaneFocusUpdate = { type: "pane-focus", paneId };
             server.publish("sidebar", JSON.stringify(msg));
+            // Visiting a window marks its agent seen (per-pane analogue of the
+            // tmux bell clearing on visit). Re-broadcast only if it changed.
+            if (tracker.setFocusedPane(paneId)) broadcastState();
           }
         } catch {}
         return new Response("ok", { status: 200 });

@@ -49,6 +49,11 @@ export class AgentTracker {
   // Per-instance unseen tracking: "session\0instanceKey"
   private unseenInstances = new Set<string>();
   private active = new Set<string>();
+  // The tmux pane the user is currently focused on (from the pane-focus hook).
+  // Drives per-pane "seen": an agent in this pane is being watched, so its
+  // terminal/waiting events don't accrue unseen. Refines the session-level
+  // `active` gate for the many-windows-in-one-session case.
+  private focusedPaneId: string | null = null;
   // Per-instance pane-scan miss counter, keyed "session\0instanceKey".
   // An entry exists only while a previously-alive agent is missing from the
   // current scan but hasn't yet crossed the threshold. Cleared on every rebind
@@ -236,7 +241,14 @@ export class AgentTracker {
     // Seeded events always mark as unseen (they represent state from before the user connected)
     const ukey = this.unseenKey(event.session, key);
     if (TERMINAL_STATUSES.has(event.status) || event.status === "waiting") {
-      if (options?.seed || !this.active.has(event.session)) {
+      // Pane-level "seen" when the pane is known (the user is watching THIS
+      // window); fall back to the session-level active gate before the pane
+      // has been resolved. Lets many windows in one attached session still
+      // track unseen per-window.
+      const seen = event.paneId
+        ? event.paneId === this.focusedPaneId
+        : this.active.has(event.session);
+      if (options?.seed || !seen) {
         this.unseenInstances.add(ukey);
       }
     } else {
@@ -482,6 +494,24 @@ export class AgentTracker {
   setActiveSessions(sessions: string[]): void {
     this.active.clear();
     for (const s of sessions) this.active.add(s);
+  }
+
+  /** Record the currently-focused tmux pane and mark any agent living in it
+   *  as seen — visiting a window is the per-pane analogue of the bottom bar's
+   *  bell clearing on visit. Returns true if it cleared at least one unseen
+   *  flag, so the caller can decide whether to re-broadcast state. */
+  setFocusedPane(paneId: string | null): boolean {
+    this.focusedPaneId = paneId;
+    if (!paneId) return false;
+    let cleared = false;
+    for (const [session, sessionInstances] of this.instances) {
+      for (const [key, ev] of sessionInstances) {
+        if (ev.paneId === paneId) {
+          if (this.unseenInstances.delete(this.unseenKey(session, key))) cleared = true;
+        }
+      }
+    }
+    return cleared;
   }
 
   /** Fold pane scanner results into the tracker.

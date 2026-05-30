@@ -1301,3 +1301,54 @@ describe("AgentTracker", () => {
     });
   });
 });
+
+describe("AgentTracker — pane-level focus (setFocusedPane)", () => {
+  let tracker: AgentTracker;
+
+  beforeEach(() => {
+    tracker = new AgentTracker();
+  });
+
+  test("terminal event in the FOCUSED pane is NOT unseen (even if session not active)", () => {
+    tracker.setFocusedPane("%6");
+    tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t1", paneId: "%6" }));
+    expect(tracker.isUnseen("sess-1")).toBe(false);
+  });
+
+  test("terminal event in a NON-focused pane IS unseen, even when the session is attached", () => {
+    // This is the core fix: many windows in one attached session must still
+    // distinguish per-pane. Old session-level gate wrongly suppressed this.
+    tracker.setActiveSessions(["sess-1"]);
+    tracker.setFocusedPane("%6");
+    tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t1", paneId: "%12" }));
+    expect(tracker.isUnseen("sess-1")).toBe(true);
+  });
+
+  test("waiting event in a non-focused pane IS unseen", () => {
+    tracker.setFocusedPane("%6");
+    tracker.applyEvent(event({ session: "sess-1", status: "waiting", threadId: "t1", paneId: "%12" }));
+    expect(tracker.isUnseen("sess-1")).toBe(true);
+  });
+
+  test("setFocusedPane clears existing unseen for instances in that pane (visiting = seen)", () => {
+    tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t1", paneId: "%12" }));
+    expect(tracker.isUnseen("sess-1")).toBe(true);
+    tracker.setFocusedPane("%12");
+    expect(tracker.isUnseen("sess-1")).toBe(false);
+  });
+
+  test("focusing one pane does NOT clear another pane's unseen", () => {
+    tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t1", paneId: "%12" }));
+    tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t2", paneId: "%14" }));
+    expect(tracker.isUnseen("sess-1")).toBe(true);
+    tracker.setFocusedPane("%12"); // visited only %12
+    expect(tracker.isUnseen("sess-1")).toBe(true); // %14 still unseen
+  });
+
+  test("unknown paneId falls back to session-level active gate (backward compat)", () => {
+    tracker.setActiveSessions(["sess-1"]);
+    tracker.setFocusedPane("%6");
+    tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t1" })); // no paneId
+    expect(tracker.isUnseen("sess-1")).toBe(false);
+  });
+});
