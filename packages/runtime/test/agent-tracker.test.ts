@@ -1351,4 +1351,23 @@ describe("AgentTracker — pane-level focus (setFocusedPane)", () => {
     tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t1" })); // no paneId
     expect(tracker.isUnseen("sess-1")).toBe(false);
   });
+
+  test("unseen is STICKY across the idle settle — done→idle keeps it until you visit", () => {
+    // A finished agent rings the bell, then settles to idle within seconds.
+    // idle must not erase the "you haven't looked" signal (matches the bar's
+    // sticky bell). Only visiting the pane clears it.
+    tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t1", paneId: "%12" }));
+    expect(tracker.isUnseen("sess-1")).toBe(true);
+    tracker.applyEvent(event({ session: "sess-1", status: "idle", threadId: "t1", paneId: "%12" }));
+    expect(tracker.isUnseen("sess-1")).toBe(true); // idle did NOT clear it
+    tracker.setFocusedPane("%12"); // visit
+    expect(tracker.isUnseen("sess-1")).toBe(false);
+  });
+
+  test("a genuine resume (running) still clears unseen", () => {
+    tracker.applyEvent(event({ session: "sess-1", status: "done", threadId: "t1", paneId: "%12" }));
+    expect(tracker.isUnseen("sess-1")).toBe(true);
+    tracker.applyEvent(event({ session: "sess-1", status: "running", threadId: "t1", paneId: "%12" }));
+    expect(tracker.isUnseen("sess-1")).toBe(false);
+  });
 });

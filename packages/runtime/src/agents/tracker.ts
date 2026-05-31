@@ -251,8 +251,13 @@ export class AgentTracker {
       if (options?.seed || !seen) {
         this.unseenInstances.add(ukey);
       }
-    } else {
-      // Non-terminal/non-waiting status for this instance = user is interacting, mark seen
+    } else if (event.status === "running") {
+      // A genuine resume (status "running" = the user sent new input) marks
+      // the instance seen. "idle" must NOT clear it: a finished agent settles
+      // to idle within seconds, and clearing on idle would erase the "changed
+      // while you were away" signal before you ever looked at it. Only a visit
+      // (setFocusedPane), a real resume, or dismiss clears unseen — matching
+      // the tmux bar's sticky bell, which stays lit until you visit the window.
       this.unseenInstances.delete(ukey);
     }
   }
