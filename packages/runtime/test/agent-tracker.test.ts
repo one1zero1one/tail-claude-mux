@@ -297,12 +297,16 @@ describe("AgentTracker", () => {
 
   // --- handleFocus ---
 
-  test("handleFocus clears unseen for focused session", () => {
-    tracker.applyEvent(event({ session: "sess-1", status: "done" }));
+  test("handleFocus does NOT clear unseen — only a per-pane visit does", () => {
+    // Session-level focus must not wipe unseen across the whole session, or
+    // every window's red clears the instant you focus any other window.
+    tracker.applyEvent(event({ session: "sess-1", status: "done", paneId: "%1" }));
     expect(tracker.isUnseen("sess-1")).toBe(true);
 
-    const hadUnseen = tracker.handleFocus("sess-1");
-    expect(hadUnseen).toBe(true);
+    tracker.handleFocus("sess-1");
+    expect(tracker.isUnseen("sess-1")).toBe(true); // still unseen — focus didn't wipe it
+
+    tracker.setFocusedPane("%1"); // actually visiting the pane clears it
     expect(tracker.isUnseen("sess-1")).toBe(false);
   });
 

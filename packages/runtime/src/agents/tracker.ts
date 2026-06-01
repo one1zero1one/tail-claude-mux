@@ -481,19 +481,13 @@ export class AgentTracker {
   handleFocus(session: string): boolean {
     this.active.clear();
     this.active.add(session);
-
-    const hadUnseen = this.isUnseen(session);
-    if (hadUnseen) {
-      // Clear unseen flags — keep terminal instances visible (as "seen")
-      // pruneTerminal will clean them up after timeout
-      const sessionInstances = this.instances.get(session);
-      if (sessionInstances) {
-        for (const key of sessionInstances.keys()) {
-          this.unseenInstances.delete(this.unseenKey(session, key));
-        }
-      }
-    }
-    return hadUnseen;
+    // Intentionally do NOT clear unseen here. Session-level focus used to mark
+    // the entire session seen — fine when one session == one agent, but with
+    // many windows in a single tmux session it wiped EVERY window's unseen on
+    // any focus change (a tab going gray the instant you focus any other tab).
+    // Per-pane "seen" is handled by setFocusedPane (the pane-focus hook) when
+    // the user actually visits a specific window.
+    return false;
   }
 
   setActiveSessions(sessions: string[]): void {
