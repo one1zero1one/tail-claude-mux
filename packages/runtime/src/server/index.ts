@@ -1788,7 +1788,11 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
           } else {
             log("hook", "rejected-malformed", { hint: "schema validation failed" });
           }
-        } catch {}
+        } catch (e: any) {
+          // Don't swallow silently: a throw here used to drop the hook with no
+          // trace (e.g. a Stop event lost → agent stuck "running"). Log it.
+          log("hook", "handler-error", { err: String(e?.message ?? e), stack: String(e?.stack ?? "").split("\n").slice(0, 6).join(" | ") });
+        }
         return new Response("ok", { status: 200 });
       }
 
