@@ -1,6 +1,6 @@
 import { render } from "@opentui/solid";
 import { appendFileSync } from "fs";
-import { createSignal, createEffect, onCleanup, onMount, batch, For, Show, createMemo, type Accessor } from "solid-js";
+import { createSignal, createEffect, onCleanup, onMount, batch, For, Show, createMemo, untrack, type Accessor } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { useKeyboard, useRenderer } from "@opentui/solid";
 import { TextAttributes } from "@opentui/core";
@@ -1170,9 +1170,15 @@ function App() {
                 if (isFocused || Date.now() >= focusSuppressUntil) {
                   setPaneFocused(isFocused);
                 }
-                // Remember the focused WORK pane (ignore the sidebar's own
-                // pane) so its agent row renders bright/current.
-                if (!isFocused) setCurrentPaneId(msg.paneId);
+                // Remember the focused WORK pane so its agent row renders
+                // bright/current. Only accept panes that are actual agent/work
+                // rows — every window's sidebar pane ALSO fires pane-focus when
+                // it spawns or grabs focus, and those must not become
+                // currentPaneId (they match no row, blanking the marker).
+                if (!isFocused) {
+                  const rows = focusedData()?.paneRows ?? [];
+                  if (rows.some((r) => r.paneId === msg.paneId)) setCurrentPaneId(msg.paneId);
+                }
               }
             } else if (msg.type === "re-identify") {
               reIdentify();
@@ -1235,6 +1241,19 @@ function App() {
     const data = focusedData();
     const rows = data?.paneRows ?? [];
     setFocusedAgentIdx((idx) => Math.min(idx, Math.max(0, rows.length - 1)));
+  });
+
+  // Follow the active tmux window: when focus moves to a work pane, point the
+  // sidebar's highlighted row at that pane so the row background tracks "where
+  // you are" (not just the glyph colour). untrack the paneRows lookup so this
+  // fires only on an actual window switch (currentPaneId change), not on every
+  // pane-scan refresh — otherwise it would fight manual j/k navigation.
+  createEffect(() => {
+    const pid = currentPaneId();
+    if (!pid) return;
+    const rows = untrack(() => focusedData()?.paneRows ?? []);
+    const idx = rows.findIndex((r) => r.paneId === pid);
+    if (idx >= 0) setFocusedAgentIdx(idx);
   });
 
   useKeyboard((key) => {
