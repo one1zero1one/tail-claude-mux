@@ -242,18 +242,31 @@ export class TmuxProvider implements MuxProviderV1, WindowCapable, SidebarCapabl
     return newPane.id;
   }
 
-  hideSidebar(paneId: string): void {
+  hideSidebar(paneId: string): boolean {
     this.ensureStash();
-    // Prune orphan panes (titles that drifted away from `tcm-sidebar`)
-    // before adding a new one. Stops the stash from accumulating cruft
-    // across hide/restore cycles — the previous tcm-sidebar pane whose
-    // TUI process exited could end up with the user's hostname as title.
-    this.pruneStashOrphans();
-    // Ensure the stash window is large enough to accept another pane.
-    // join-pane fails with "pane too small" when stash panes fill up.
-    rawTmux(["resize-window", "-t", `${STASH_SESSION}:`, "-x", "200", "-y", "200"]);
     plog("hideSidebar: stashing pane", { paneId });
-    rawTmux(["join-pane", "-d", "-s", paneId, "-t", `${STASH_SESSION}:`]);
+    // break-pane gives every stashed sidebar its own window in the stash
+    // session. Joining them all into one shared window halves the target
+    // pane on every join (99→49→…→1) and dies with "create pane failed:
+    // pane too small" around the 9th sidebar — a 9-window session is a
+    // normal day, not an edge case.
+    const r = Bun.spawnSync(
+      ["tmux", "break-pane", "-d", "-s", paneId, "-t", `${STASH_SESSION}:`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const ok = r.exitCode === 0;
+    if (!ok) {
+      plog("hideSidebar: join-pane FAILED", { paneId, stderr: r.stderr.toString().trim() });
+    }
+    // Prune orphan panes (titles that drifted away from `tcm-sidebar`)
+    // AFTER the join, never before: on a fresh stash the only pane is the
+    // bootstrap shell from ensureStash, and pruning it first kills the
+    // whole session — the join then targets a dead session and silently
+    // fails while the sidebar stays visible. With the join done, the
+    // stashed sidebar keeps the session alive and the cruft panes
+    // (bootstrap shell, previous TUIs whose title drifted) can go.
+    this.pruneStashOrphans();
+    return ok;
   }
 
   killSidebarPane(paneId: string): void {

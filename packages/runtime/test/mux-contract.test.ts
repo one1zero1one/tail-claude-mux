@@ -54,7 +54,7 @@ describe("Mux Contract", () => {
 
       listSidebarPanes: () => [],
       spawnSidebar: () => null,
-      hideSidebar: () => {},
+      hideSidebar: () => true,
       killSidebarPane: () => {},
       resizeSidebarPane: () => {},
       killOrphanedSidebarPanes: () => {},
@@ -95,7 +95,7 @@ describe("Mux Contract", () => {
       getCurrentWindowId: () => null,
       listSidebarPanes: () => [],
       spawnSidebar: () => null,
-      hideSidebar: () => {},
+      hideSidebar: () => true,
       killSidebarPane: () => {},
       resizeSidebarPane: () => {},
       killOrphanedSidebarPanes: () => {},

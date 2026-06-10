@@ -87,7 +87,9 @@ export interface SidebarCapable {
     position: SidebarPosition,
     scriptsDir: string,
   ): string | null;
-  hideSidebar(paneId: string): void;
+  /** Hide a sidebar pane (e.g. stash it out of view). Returns true only if
+   *  the pane actually left its window — callers must not assume success. */
+  hideSidebar(paneId: string): boolean;
   killSidebarPane(paneId: string): void;
   resizeSidebarPane(paneId: string, width: number): void;
   /** Kill sidebar panes that are the only pane left in their window (orphaned). */

@@ -883,14 +883,25 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
 
     invalidateSidebarPaneCache();
     if (sidebarVisible) {
+      let failed = 0;
       for (const p of providers) {
         const panes = p.listSidebarPanes();
         log("toggle", "OFF — hiding panes", { provider: p.name, count: panes.length });
         for (const pane of panes) {
-          p.hideSidebar(pane.paneId);
+          if (!p.hideSidebar(pane.paneId)) failed++;
         }
       }
-      sidebarVisible = false;
+      invalidateSidebarPaneCache();
+      // Commit the hidden state only when the panes actually left their
+      // windows. Flipping blind on a failed hide leaves zombie sidebars
+      // visible while every new window is denied a spawn — state and
+      // screen disagree until the next restart.
+      const remaining = providers.reduce((n, p) => n + p.listSidebarPanes().length, 0);
+      if (remaining > 0) {
+        log("toggle", "OFF FAILED — sidebars still visible, keeping state ON", { failed, remaining });
+      } else {
+        sidebarVisible = false;
+      }
     } else {
       sidebarVisible = true;
       setPendingEnforcement();
