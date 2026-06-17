@@ -19,6 +19,7 @@ describe("set-theme command", () => {
       currentSession: null,
       theme: "dracula",
       sidebarWidth: 26,
+      condensed: false,
       ts: Date.now(),
     };
     expect(state.theme).toBe("dracula");
@@ -41,6 +42,7 @@ describe("set-theme command", () => {
         palette: { text: "#1a1e26", base: "#ede3e0", blue: "#416895" },
       },
       sidebarWidth: 26,
+      condensed: false,
       ts: Date.now(),
     };
     // Type assertion succeeds at compile time. Runtime check is incidental.
