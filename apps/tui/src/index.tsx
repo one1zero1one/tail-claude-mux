@@ -1148,6 +1148,7 @@ function App() {
               setFocusedSession(startupFocus);
               setCurrentSession(msg.currentSession);
               setTheme(resolveTheme(msg.theme));
+              setCondensed(msg.condensed);
             } else if (msg.type === "focus") {
               setFocusedSession(msg.focusedSession);
               setCurrentSession(msg.currentSession);
@@ -1289,8 +1290,10 @@ function App() {
         setModal("help");
         break;
       case "c":
-        setCondensed((v) => !v);
-        flash(condensed() ? "condensed" : "expanded");
+        // Server-owned global preference: flip it on the server, which saves
+        // to config and re-broadcasts so every pane (and new ones) follows.
+        send({ type: "toggle-condensed" });
+        flash(!condensed() ? "condensed" : "expanded");
         break;
     }
   });

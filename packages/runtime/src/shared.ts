@@ -51,6 +51,9 @@ export interface ServerState {
    *  the user's actual theme. */
   theme: string | PartialTheme | undefined;
   sidebarWidth: number;
+  /** Compact ("condensed") sidebar mode — global, server-owned. Clients
+   *  mirror this on every state message so all panes flip together. */
+  condensed: boolean;
   ts: number;
 }
 
@@ -131,6 +134,7 @@ export type ClientCommand =
   | { type: "mark-seen"; name: string }
   | { type: "dismiss-agent"; session: string; agent: string; threadId?: string; paneId?: string; pid?: number }
   | { type: "set-theme"; theme: string }
+  | { type: "toggle-condensed" }
   | { type: "identify"; clientTty: string }
   | { type: "quit" }
   | { type: "identify-pane"; paneId: string; sessionName: string }

@@ -12,6 +12,10 @@ export interface TcmConfig {
   sidebarWidth?: number;
   /** Sidebar position relative to the terminal window (default "left") */
   sidebarPosition?: "left" | "right";
+  /** Compact ("condensed") sidebar mode — every session as a single 1-line
+   *  row. Global, server-owned, broadcast to all panes; toggled with `c`.
+   *  Defaults ON when unset. */
+  condensed?: boolean;
   /** Persisted detail panel heights keyed by mux session name */
   detailPanelHeights?: Record<string, number>;
 }

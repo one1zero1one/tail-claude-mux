@@ -266,6 +266,9 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
   let externalThemeWatcher: FSWatcher | null = null;
   let configuredWidth = clampSidebarWidth(config.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH);
   let sidebarPosition: "left" | "right" = config.sidebarPosition ?? "left";
+  // Compact ("condensed") sidebar mode — global preference, broadcast to all
+  // panes. Defaults ON when unset so fresh installs get the minimal overview.
+  let condensed = config.condensed ?? true;
   let sidebarVisible = false;
 
   // The sidebar launcher lives with the TUI app, not the tmux integration layer.
@@ -699,7 +702,7 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
     // would force a name-based BUILTIN_THEMES lookup that fails for any
     // external theme written by the-themer (e.g. "tekapo-sunset-light"),
     // falling through to catppuccin-mocha and leaving the panel dark.
-    return { type: "state", sessions, focusedSession, currentSession, theme: effectiveThemeConfig(), sidebarWidth: configuredWidth, ts: Date.now() };
+    return { type: "state", sessions, focusedSession, currentSession, theme: effectiveThemeConfig(), sidebarWidth: configuredWidth, condensed, ts: Date.now() };
   }
 
   let broadcastPending = false;
@@ -1700,6 +1703,11 @@ export function startServer(mux: MuxProvider, watchers?: AgentWatcher[]): void {
         currentTheme = cmd.theme;
         saveConfig({ theme: cmd.theme });
         applyPaletteToTmux("set-theme");
+        broadcastState();
+        break;
+      case "toggle-condensed":
+        condensed = !condensed;
+        saveConfig({ condensed });
         broadcastState();
         break;
       case "quit":
