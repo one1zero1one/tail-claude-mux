@@ -7,8 +7,8 @@ description: >
   implementation work that changes the tree (MO-002 routing: repo-gets-changes
   → visible pane), when Kyle asks to "watch" a delegation, or for parallel
   worktree delegations. NOT for read-only investigation/review/second opinions
-  whose output Fable consumes directly — use /codex:rescue for those. Headless
-  or tmux-less contexts: fall back to /codex:rescue.
+  whose output the orchestrator consumes directly — use /codex:rescue for
+  those. Headless or tmux-less contexts: fall back to /codex:rescue.
 ---
 
 # tcm-delegate-codex — visible Codex delegation via TCM workflows
@@ -77,7 +77,7 @@ only for autonomous `git commit`: codex keeps `.git` read-only under
 workspace-write even in trusted worktrees (Codex-verified 2026-07-13). The
 old "nested codex spawns need bypass" rationale was an environment-specific
 fluke, not a real constraint — do not reinstate it. Containment is the
-worktree diff plus the visible pane. Follow-ups inherit the profile (MO-008).
+worktree diff plus the visible pane. Follow-ups inherit the profile.
 
 Ownership is HORIZONTAL (SPEC-5, shipped 2026-07-12): the delegate spawns
 as a tmux WINDOW (native tab) in the launching session — the spawn leg
@@ -132,7 +132,7 @@ never hand-roll a polling loop in the orchestrator (MO-001).
 The pane session is the thread; a second pane for a follow-up is the
 double-spend (MO-005). The resume re-selects the same `--profile
 tcm-delegate` the spawn used, so posture is uniform across spawn and
-follow-up (MO-008) rather than relying on implicit inheritance. The server
+follow-up rather than relying on implicit inheritance. The server
 owns the resume-respawn: it pins the
 thread's rollout by tracked threadId, refuses `running`/`waiting` with
 409 (never kills live work), revalidates before respawning, and returns
@@ -164,7 +164,7 @@ jq/curl/grep. Interpret the return:
 
 This is the ONLY follow-up path. Server down or the workflow returning
 `error`: restart the server (`just restart` in the TCM repo) and retry
-once; still broken → report to Kyle (MO-009) — never hand-roll a
+once; still broken → report to Kyle — never hand-roll a
 resume-respawn around the seam.
 
 Degraded path (Workflow tool unavailable ONLY): deliver by hand with
