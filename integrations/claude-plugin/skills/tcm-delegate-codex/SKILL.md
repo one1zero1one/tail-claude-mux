@@ -40,9 +40,9 @@ Fails → TCM isn't running; fall back to /codex:rescue and say why.
 
 For parallel or long work, create the git worktree FIRST (MO-002) and pass
 its path — TCM does no git writes. Codex trust follows the worktree's MAIN
-repository: a worktree of a trusted repo is trusted anywhere on disk
-(spike-verified 2026-07-11). Only a genuinely fresh non-worktree dir hits
-the interactive trust prompt and stalls the run as `waiting`.
+repository: a worktree of a trusted repo is trusted anywhere on disk. Only a
+genuinely fresh non-worktree dir hits the interactive trust prompt and stalls
+the run as `waiting`.
 
 Workflow tool, scriptPath
 `${CLAUDE_PLUGIN_ROOT}/workflows/tcm-delegate.js`, args (`watchMinutes`/`pollSeconds`
@@ -74,14 +74,13 @@ blocks routine delegation. The profile is Kyle's own persistent config, so
 the bypass is a self-authored decision, not something the workflow injects.
 The full-bypass posture (`sandbox_mode = "danger-full-access"`) is required
 only for autonomous `git commit`: codex keeps `.git` read-only under
-workspace-write even in trusted worktrees (Codex-verified 2026-07-13). The
-old "nested codex spawns need bypass" rationale was an environment-specific
-fluke, not a real constraint — do not reinstate it. Containment is the
-worktree diff plus the visible pane. Follow-ups inherit the profile.
+workspace-write even in trusted worktrees. Nested codex spawns do not need
+the bypass. Containment is the worktree diff plus the visible pane.
+Follow-ups inherit the profile.
 
-Ownership is HORIZONTAL (SPEC-5, shipped 2026-07-12): the delegate spawns
-as a tmux WINDOW (native tab) in the launching session — the spawn leg
-auto-discovers the owner via `tmux display-message`; pass
+Ownership is HORIZONTAL: the delegate spawns as a tmux WINDOW (native tab) in
+the launching session — the spawn leg auto-discovers the owner via
+`tmux display-message`; pass
 `"ownerSession": "<name>"` to override. No tmux context → legacy detached
 session, unchanged. Closing the owner session reaps its delegate windows.
 
