@@ -30,7 +30,10 @@ count_receipts() {
   # contains '.' and other metacharacters that a regex would match loosely and
   # fake a receipt. An empty MSGFILE/ROLLOUT yields 0 (an empty -F pattern would
   # otherwise match every line).
-  if [ -z "$MSGFILE" ] || [ -z "$ROLLOUT" ]; then echo 0; return; fi
+  if [ -z "$MSGFILE" ] || [ -z "$ROLLOUT" ]; then
+    echo 0
+    return
+  fi
   grep -F -c -- "$MSGFILE" "$ROLLOUT" 2>/dev/null || true
 }
 RESP=$(post_followup 2>&1)
