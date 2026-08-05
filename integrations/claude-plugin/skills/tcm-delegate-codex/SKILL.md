@@ -19,14 +19,15 @@ deterministic workflow scripts, not prose steps. A/B-validated 2026-07-10
 `tail-claude-mux/.agent-history/PLAN-delegation-workflows-experiment.md`).
 
 The workflows ship bundled with this plugin under
-`${CLAUDE_PLUGIN_ROOT}/workflows/` (`tcm-delegate.js`, `tcm-watch.js`, plus the
-`lib/` shell scripts they run). Invoke by absolute scriptPath — they work from
-any project cwd. The Workflow JS sandbox cannot read its own install path, so
-every invocation MUST pass the bundled paths in as args: `libDir` (the
-`${CLAUDE_PLUGIN_ROOT}/workflows/lib` dir) and, for delegate, `watchScriptPath`
-(the `${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch.js` file). Codex delegates only;
-for claude/pi delegates or when the Workflow tool is unavailable, fall back to
-/codex:rescue.
+`${CLAUDE_PLUGIN_ROOT}/workflows/` (`tcm-delegate-workflow.js`,
+`tcm-watch-workflow.js`, plus the `lib/` shell scripts they run). Invoke by
+absolute scriptPath — they work from any project cwd. The Workflow JS sandbox
+cannot read its own install path, so every invocation MUST pass the bundled
+paths in as args: `libDir` (the `${CLAUDE_PLUGIN_ROOT}/workflows/lib` dir) and,
+for delegate, `watchScriptPath` (the
+`${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch-workflow.js` file). Codex delegates
+only; for claude/pi delegates or when the Workflow tool is unavailable, fall
+back to /codex:rescue.
 
 ## Preconditions (check once, cheaply)
 
@@ -45,14 +46,14 @@ genuinely fresh non-worktree dir hits the interactive trust prompt and stalls
 the run as `waiting`.
 
 Workflow tool, scriptPath
-`${CLAUDE_PLUGIN_ROOT}/workflows/tcm-delegate.js`, args (`watchMinutes`/`pollSeconds`
-optional, default 20/30):
+`${CLAUDE_PLUGIN_ROOT}/workflows/tcm-delegate-workflow.js`, args
+(`watchMinutes`/`pollSeconds` optional, default 20/30):
 
 ```json
 {"dir": "/abs/worktree", "name": "kebab-window-name", "brief": "<context-complete per MO-002>",
  "watchMinutes": 20, "pollSeconds": 30,
  "libDir": "${CLAUDE_PLUGIN_ROOT}/workflows/lib",
- "watchScriptPath": "${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch.js"}
+ "watchScriptPath": "${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch-workflow.js"}
 ```
 
 `${CLAUDE_PLUGIN_ROOT}` must reach the Workflow args as a LITERAL absolute path,
@@ -113,7 +114,7 @@ Returns `{outcome, sessionName, paneId, windowId, ownerSession, resultSummary, w
 
 ## 2. Watch only (delegate already running)
 
-scriptPath `${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch.js`, args
+scriptPath `${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch-workflow.js`, args
 `{"session": "<name>", "pane": "%NN", "watchMinutes": 20, "pollSeconds": 30, "libDir": "${CLAUDE_PLUGIN_ROOT}/workflows/lib"}`.
 Detection is `GET /wait` long-poll primary (the server reconciles hook
 status against rollout evidence, so done/error/interrupted are
@@ -138,7 +139,7 @@ thread's rollout by tracked threadId, refuses `running`/`waiting` with
 receipts.
 
 Write the follow-up message to a file (multiline-safe), then ONE Workflow
-call — scriptPath `${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch.js`, args:
+call — scriptPath `${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch-workflow.js`, args:
 
 ```json
 {"session": "<name>", "pane": "%NN", "sourceMessageFile": "/abs/msgfile.md",

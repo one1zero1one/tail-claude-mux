@@ -1,5 +1,5 @@
 #!/bin/bash
-# Committed counterpart of tcm-watch.js's deliveryScript(p). Behavior-frozen:
+# Committed counterpart of tcm-watch-workflow.js's deliveryScript(p). Behavior-frozen:
 # see .agent-history or the workflow's git log for the extraction commit.
 # Args: SESH PANE SOURCE
 #   SESH   - TCM session name to deliver the follow-up to

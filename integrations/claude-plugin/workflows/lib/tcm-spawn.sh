@@ -1,5 +1,5 @@
 #!/bin/bash
-# Committed counterpart of tcm-delegate.js's spawnScript(p). Behavior-frozen:
+# Committed counterpart of tcm-delegate-workflow.js's spawnScript(p). Behavior-frozen:
 # see .agent-history or the workflow's git log for the extraction commit.
 # Args: DIR NAME BRIEF_JSON OWNER
 #   DIR        - absolute working directory for the spawned delegate

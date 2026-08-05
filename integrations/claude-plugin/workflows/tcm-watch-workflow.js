@@ -1,4 +1,4 @@
-// tcm-watch — deterministic delegation watcher.
+// tcm-watch-workflow — deterministic delegation watcher.
 //
 // Detection is GET /wait primary (the server long-polls its own tracker,
 // which since b92897d reconciles codex hook status against rollout
@@ -16,7 +16,7 @@
 //
 // Bundled in the tcm plugin. The Workflow JS sandbox has no filesystem or env
 // access, so it cannot resolve its own ${CLAUDE_PLUGIN_ROOT}: the invoking
-// skill (or the parent tcm-delegate run) passes libDir in as an arg.
+// skill (or the parent tcm-delegate-workflow run) passes libDir in as an arg.
 //
 // Invoke via scriptPath with args:
 //   { session: "tcm-session-name", pane: "%42" (optional),
@@ -31,7 +31,7 @@
 //     delivery?: { receipt_count, message_file, rollout_path }, resultSummary? }
 
 export const meta = {
-  name: 'tcm-watch',
+  name: 'tcm-watch-workflow',
   description: 'Watch a TCM-tracked delegate tmux session until terminal state (/wait long-poll primary, pane-quiescence fallback)',
   phases: [
     { title: 'Deliver', detail: 'POST /followup + rollout receipt verification' },
@@ -142,7 +142,7 @@ if (!cfg.session) {
   return { resolution: 'error', detail: 'args.session is required (TCM session name to watch)', polls_total: 0, legs: 0, leg_deaths: 0 }
 }
 // libDir is required: the bundled workflow can't resolve its own plugin root,
-// so the invoking skill (or the parent tcm-delegate run) injects it. It must
+// so the invoking skill (or the parent tcm-delegate-workflow run) injects it. It must
 // be a resolved absolute path — neither this sandbox nor the nested sub-agent
 // Bash expands the plugin-root placeholder — so reject a placeholder or a
 // relative path with a clear message instead of failing opaquely later.
@@ -175,7 +175,7 @@ if (cfg.sourceMessageFile) {
       label: `deliver:${session}`, phase: 'Deliver', model: 'haiku', effort: 'low', schema: DELIVERY_SCHEMA,
     })
   } catch (e) {
-    log(`tcm-watch "${session}": deliver leg failed (${e && e.message ? e.message : e})`)
+    log(`tcm-watch-workflow "${session}": deliver leg failed (${e && e.message ? e.message : e})`)
   }
   if (!delivered) {
     return {
@@ -207,7 +207,7 @@ if (cfg.sourceMessageFile) {
 let watchOutcome = null
 
 for (let i = 1; i <= maxLegs; i++) {
-  log(`tcm-watch "${session}": leg ${i}/${maxLegs} (polls so far: ${pollsTotal}, leg deaths: ${legDeaths})`)
+  log(`tcm-watch-workflow "${session}": leg ${i}/${maxLegs} (polls so far: ${pollsTotal}, leg deaths: ${legDeaths})`)
   let r = null
   try {
     r = await agent(
@@ -217,7 +217,7 @@ for (let i = 1; i <= maxLegs; i++) {
   } catch (e) {
     // A schema retry-cap inside agent() THROWS; without this catch one bad leg
     // would abort the entire watch. Treat a throw exactly like a null return.
-    log(`tcm-watch "${session}": watch leg ${i} threw (${e && e.message ? e.message : e}); counting it as a leg death`)
+    log(`tcm-watch-workflow "${session}": watch leg ${i} threw (${e && e.message ? e.message : e}); counting it as a leg death`)
   }
   if (!r) {
     // leg died (null return) or threw at the harness level — a raw seam event; retry costs one leg slot
@@ -277,6 +277,6 @@ try {
     label: `result:${session}`, phase: 'Result', model: 'haiku', effort: 'low', schema: RESULT_SCHEMA,
   })
 } catch (e) {
-  log(`tcm-watch: result leg failed (${e && e.message ? e.message : e}); watch outcome preserved`)
+  log(`tcm-watch-workflow: result leg failed (${e && e.message ? e.message : e}); watch outcome preserved`)
 }
 return { ...watchOutcome, resultSummary: result ? result.summary : '' }

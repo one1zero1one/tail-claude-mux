@@ -1,6 +1,6 @@
-// tcm-delegate — composite delegation workflow (experiment arm B1).
+// tcm-delegate-workflow — composite delegation workflow (experiment arm B1).
 //
-// spawn (TCM POST /spawn-agent) → watch (nested tcm-watch.js run) → read
+// spawn (TCM POST /spawn-agent) → watch (nested tcm-watch-workflow.js run) → read
 // result (final assistant message from the thread's rollout). The delegate
 // runs in a visible tmux pane with a dashboard row (MO-007); this workflow
 // only automates the seams around it.
@@ -8,11 +8,11 @@
 // Bundled in the tcm plugin. The Workflow JS sandbox has no filesystem or env
 // access, so it cannot resolve its own ${CLAUDE_PLUGIN_ROOT}: the invoking
 // skill passes the plugin-relative paths in as args (libDir, watchScriptPath),
-// and this workflow forwards libDir to the nested tcm-watch run.
+// and this workflow forwards libDir to the nested tcm-watch-workflow run.
 //
 // Invoke via scriptPath with args:
 //   { dir: "/abs/workdir", name: "kebab-session-name", brief: "context-complete task brief",
-//     libDir: "/abs/plugin/workflows/lib", watchScriptPath: "/abs/plugin/workflows/tcm-watch.js",
+//     libDir: "/abs/plugin/workflows/lib", watchScriptPath: "/abs/plugin/workflows/tcm-watch-workflow.js",
 //     watchMinutes: 20 (optional), pollSeconds: 30 (optional),
 //     ownerSession: "tmux-session" (optional; defaults to current tmux session) }
 // Returns:
@@ -20,11 +20,11 @@
 //     sessionName, paneId, windowId, ownerSession, dir, resultSummary, watch: {...}, detail }
 
 export const meta = {
-  name: 'tcm-delegate',
+  name: 'tcm-delegate-workflow',
   description: 'Spawn a visible codex delegate via TCM, watch it to terminal state, read its result',
   phases: [
     { title: 'Spawn', detail: 'POST /spawn-agent + survival check' },
-    { title: 'Watch', detail: 'nested tcm-watch run' },
+    { title: 'Watch', detail: 'nested tcm-watch-workflow run' },
     { title: 'Result', detail: 'final assistant message from the rollout' },
   ],
 }
@@ -100,7 +100,7 @@ const spawned = await agent(spawnPrompt({ dir: cfg.dir, name: cfg.name, brief: c
 if (!spawned || !spawned.alive || !spawned.session_name || spawned.session_name === 'none') {
   return { outcome: 'spawn-failed', detail: spawned ? spawned.evidence : 'spawn leg died', sessionName: '', paneId: '', windowId: spawned ? spawned.window_id : '', ownerSession: spawned ? spawned.owner_session : (cfg.ownerSession || ''), dir: cfg.dir, resultSummary: '', watch: null }
 }
-log(`tcm-delegate: spawned "${spawned.session_name}" (pane ${spawned.pane_id}) in ${cfg.dir}`)
+log(`tcm-delegate-workflow: spawned "${spawned.session_name}" (pane ${spawned.pane_id}) in ${cfg.dir}`)
 
 phase('Watch')
 const watch = await workflow(
@@ -132,7 +132,7 @@ try {
     label: `result:${spawned.session_name}`, phase: 'Result', model: 'haiku', effort: 'low', schema: RESULT_SCHEMA,
   })
 } catch (e) {
-  log(`tcm-delegate: result leg failed (${e && e.message ? e.message : e}); delegate outcome preserved`)
+  log(`tcm-delegate-workflow: result leg failed (${e && e.message ? e.message : e}); delegate outcome preserved`)
 }
 return {
   outcome: watch.resolution,

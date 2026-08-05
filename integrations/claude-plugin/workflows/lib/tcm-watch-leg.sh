@@ -1,5 +1,5 @@
 #!/bin/bash
-# Committed counterpart of tcm-watch.js's legScript(p). Behavior-frozen:
+# Committed counterpart of tcm-watch-workflow.js's legScript(p). Behavior-frozen:
 # see .agent-history or the workflow's git log for the extraction commit.
 # Args: PANE SESH INTERVAL LEG_SECONDS QCOUNT LAST_HASH
 #   PANE       - pane id, or "" if unknown (falls back to /state polling)
