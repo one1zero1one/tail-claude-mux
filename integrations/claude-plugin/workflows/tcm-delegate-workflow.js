@@ -14,7 +14,9 @@
 //   { dir: "/abs/workdir", name: "kebab-session-name", brief: "context-complete task brief",
 //     libDir: "/abs/plugin/workflows/lib", watchScriptPath: "/abs/plugin/workflows/tcm-watch-workflow.js",
 //     watchMinutes: 20 (optional), pollSeconds: 30 (optional),
-//     ownerSession: "tmux-session" (optional; defaults to current tmux session) }
+//     ownerSession: "tmux-session" (optional; auto-detected from the current
+//     tmux session, required for the spawn to succeed — "" is not a valid
+//     final value) }
 // Returns:
 //   { outcome: finished|waiting|error|session-dead|timeout|spawn-failed,
 //     sessionName, paneId, windowId, ownerSession, dir, resultSummary, watch: {...}, detail }
@@ -53,6 +55,9 @@ const RESULT_SCHEMA = {
 }
 
 function spawnPrompt(p) {
+  // ownerSession is auto-detected from the current tmux session by
+  // tcm-spawn.sh when empty here; the spawn itself requires a non-empty
+  // owner and fails otherwise.
   const owner = p.ownerSession || ''
   // JSON-encode the brief so it rides as ONE single-line, safely-quoted shell
   // token: JSON.stringify escapes newlines to \n (no literal newlines for the
@@ -97,7 +102,7 @@ phase('Spawn')
 const spawned = await agent(spawnPrompt({ dir: cfg.dir, name: cfg.name, brief: cfg.brief, ownerSession: cfg.ownerSession || '', libDir: cfg.libDir }), {
   label: `spawn:${cfg.name}`, phase: 'Spawn', model: 'haiku', effort: 'low', schema: SPAWN_SCHEMA,
 })
-if (!spawned || !spawned.alive || !spawned.session_name || spawned.session_name === 'none') {
+if (!spawned || !spawned.alive || !spawned.session_name || spawned.session_name === 'none' || !spawned.owner_session) {
   return { outcome: 'spawn-failed', detail: spawned ? spawned.evidence : 'spawn leg died', sessionName: '', paneId: '', windowId: spawned ? spawned.window_id : '', ownerSession: spawned ? spawned.owner_session : (cfg.ownerSession || ''), dir: cfg.dir, resultSummary: '', watch: null }
 }
 log(`tcm-delegate-workflow: spawned "${spawned.session_name}" (pane ${spawned.pane_id}) in ${cfg.dir}`)

@@ -36,7 +36,7 @@ type SpawnAgentRequest struct {
 	Agent        string `json:"agent"`
 	Prompt       string `json:"prompt"`
 	Name         string `json:"name,omitempty"`
-	OwnerSession string `json:"ownerSession,omitempty"`
+	OwnerSession string `json:"ownerSession"`
 	// Command replaces the default agent argv. Its prompt is appended bare;
 	// callers supplying an override own any end-of-options handling it needs.
 	Command []string `json:"command,omitempty"`
@@ -57,7 +57,7 @@ type SpawnAgentValidationError struct {
 // Error implements error.
 func (e *SpawnAgentValidationError) Error() string { return e.message }
 
-// SpawnAgent validates and starts an agent in a new tmux session or owner window.
+// SpawnAgent validates and starts an agent in a new owner window.
 func (t *Tmux) SpawnAgent(req SpawnAgentRequest) (SpawnAgentResult, error) {
 	if err := validateSpawnAgentRequest(req); err != nil {
 		return SpawnAgentResult{}, err
@@ -70,12 +70,9 @@ func (t *Tmux) SpawnAgent(req SpawnAgentRequest) (SpawnAgentResult, error) {
 		return SpawnAgentResult{}, err
 	}
 	command := buildSpawnAgentCommand(req)
-	args := []string{"new-session", "-d", "-s", name, "-c", req.Dir}
-	if req.OwnerSession != "" {
-		// -d keeps focus on the caller's window — a spawned delegate must
-		// never yank Kyle away from what he is doing.
-		args = []string{"new-window", "-d", "-t", exactOwnerSessionTarget(req.OwnerSession), "-c", req.Dir, "-n", name}
-	}
+	// -d keeps focus on the caller's window — a spawned delegate must
+	// never yank Kyle away from what he is doing.
+	args := []string{"new-window", "-d", "-t", exactOwnerSessionTarget(req.OwnerSession), "-c", req.Dir, "-n", name}
 	args = append(args, "-P", "-F", spawnAgentFormat, "--", command)
 	out, err := t.Run(args...)
 	if err != nil {
@@ -96,6 +93,9 @@ func (t *Tmux) SpawnAgent(req SpawnAgentRequest) (SpawnAgentResult, error) {
 func validateSpawnAgentRequest(req SpawnAgentRequest) error {
 	if req.Dir == "" {
 		return &SpawnAgentValidationError{message: "dir is required"}
+	}
+	if req.OwnerSession == "" {
+		return &SpawnAgentValidationError{message: "ownerSession is required"}
 	}
 	if !filepath.IsAbs(req.Dir) {
 		return &SpawnAgentValidationError{message: "dir must be an absolute path"}
@@ -144,30 +144,24 @@ func (t *Tmux) resolveSpawnAgentName(req SpawnAgentRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("tmux could not list sessions: %w", err)
 	}
-	existing := make(map[string]struct{}, len(sessions))
-	if req.OwnerSession == "" {
-		for _, session := range sessions {
-			existing[session.Name] = struct{}{}
+	foundOwner := false
+	for _, session := range sessions {
+		if session.Name == req.OwnerSession || session.ID == req.OwnerSession {
+			foundOwner = true
+			break
 		}
-	} else {
-		foundOwner := false
-		for _, session := range sessions {
-			if session.Name == req.OwnerSession || session.ID == req.OwnerSession {
-				foundOwner = true
-				break
-			}
-		}
-		if !foundOwner {
-			return "", &SpawnAgentValidationError{message: "owner session does not exist"}
-		}
-		out, err := t.Run("list-windows", "-t", exactOwnerSessionTarget(req.OwnerSession), "-F", "#{window_name}")
-		if err != nil {
-			return "", fmt.Errorf("tmux could not list owner session windows: %w", err)
-		}
-		for name := range strings.SplitSeq(out, "\n") {
-			if name != "" {
-				existing[name] = struct{}{}
-			}
+	}
+	if !foundOwner {
+		return "", &SpawnAgentValidationError{message: "owner session does not exist"}
+	}
+	out, err := t.Run("list-windows", "-t", exactOwnerSessionTarget(req.OwnerSession), "-F", "#{window_name}")
+	if err != nil {
+		return "", fmt.Errorf("tmux could not list owner session windows: %w", err)
+	}
+	existing := make(map[string]struct{})
+	for windowName := range strings.SplitSeq(out, "\n") {
+		if windowName != "" {
+			existing[windowName] = struct{}{}
 		}
 	}
 	for suffix := 1; suffix <= spawnAgentDedupeLimit; suffix++ {
@@ -179,10 +173,7 @@ func (t *Tmux) resolveSpawnAgentName(req SpawnAgentRequest) (string, error) {
 			return candidate, nil
 		}
 	}
-	if req.OwnerSession != "" {
-		return "", fmt.Errorf("could not find an available tmux window name")
-	}
-	return "", fmt.Errorf("could not find an available tmux session name")
+	return "", fmt.Errorf("could not find an available tmux window name")
 }
 
 // A bare session name can be shadowed by a window with the same name. The

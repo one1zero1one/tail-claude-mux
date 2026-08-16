@@ -82,8 +82,9 @@ Follow-ups inherit the profile.
 Ownership is HORIZONTAL: the delegate spawns as a tmux WINDOW (native tab) in
 the launching session — the spawn leg auto-discovers the owner via
 `tmux display-message`; pass
-`"ownerSession": "<name>"` to override. No tmux context → legacy detached
-session, unchanged. Closing the owner session reaps its delegate windows.
+`"ownerSession": "<name>"` to override. No tmux context → the spawn is
+rejected with 400 `ownerSession is required`; use `/codex:rescue` instead.
+Closing the owner session reaps its delegate windows.
 
 End the brief with: `When complete, print exactly one line starting with
 RESULT:, then stop.` — the result leg keys off the final message.
@@ -183,8 +184,6 @@ Leave the window open when the task completes. On his go:
 - Single horizontal delegate: `tmux kill-window -t '<windowId>'` (the
   returned `@NN`). NEVER kill-session — `sessionName` is Kyle's OWN session
   under horizontal ownership.
-- Legacy detached delegate (no owner): `tmux kill-session -t '=<sessionName>'`
-  (quote the `=`).
 - Then remove the worktree if one was created:
   `git worktree remove <path> && git branch -d <branch>`. Worktrees are
   created by the orchestrator, so the orchestrator sweeps them — TCM never

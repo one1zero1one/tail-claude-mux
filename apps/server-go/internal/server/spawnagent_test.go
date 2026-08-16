@@ -23,6 +23,7 @@ func TestHandleSpawnAgent(t *testing.T) {
 		{name: "malformed JSON", body: "{", wantStatus: http.StatusBadRequest, wantError: "request body must be valid JSON"},
 		{name: "trailing JSON", body: `{} {}`, wantStatus: http.StatusBadRequest, wantError: "request body must be valid JSON"},
 		{name: "validation failure", body: `{}`, wantStatus: http.StatusBadRequest, wantError: "dir is required"},
+		{name: "missing owner session", body: `{"dir":"/tmp","agent":"codex","prompt":"task"}`, wantStatus: http.StatusBadRequest, wantError: "ownerSession is required"},
 	}
 
 	for _, tt := range tests {

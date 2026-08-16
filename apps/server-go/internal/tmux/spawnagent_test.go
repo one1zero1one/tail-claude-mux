@@ -2,7 +2,6 @@ package tmux
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,18 +23,19 @@ func TestValidateSpawnAgentRequest(t *testing.T) {
 		req  SpawnAgentRequest
 		want string
 	}{
-		{name: "missing dir", req: SpawnAgentRequest{Agent: "codex", Prompt: "task"}, want: "dir is required"},
-		{name: "relative dir", req: SpawnAgentRequest{Dir: "relative", Agent: "codex", Prompt: "task"}, want: "dir must be an absolute path"},
-		{name: "missing path", req: SpawnAgentRequest{Dir: filepath.Join(dir, "missing"), Agent: "codex", Prompt: "task"}, want: "dir does not exist"},
-		{name: "not a directory", req: SpawnAgentRequest{Dir: file, Agent: "codex", Prompt: "task"}, want: "dir must be a directory"},
-		{name: "unknown agent", req: SpawnAgentRequest{Dir: dir, Agent: "other", Prompt: "task"}, want: "agent must be codex, claude, or pi"},
-		{name: "empty prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex"}, want: "prompt is required"},
-		{name: "blank prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: " \n\t"}, want: "prompt is required"},
-		{name: "pi flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "--help"}, want: "this agent cannot accept a prompt that begins with '-'"},
-		{name: "codex flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: "--help"}},
-		{name: "claude flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "claude", Prompt: "--help"}},
-		{name: "override allows flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "--help", Command: []string{"custom"}}},
-		{name: "valid", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "task"}},
+		{name: "missing dir", req: SpawnAgentRequest{Agent: "codex", Prompt: "task", OwnerSession: "owner"}, want: "dir is required"},
+		{name: "missing owner session", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: "task"}, want: "ownerSession is required"},
+		{name: "relative dir", req: SpawnAgentRequest{Dir: "relative", Agent: "codex", Prompt: "task", OwnerSession: "owner"}, want: "dir must be an absolute path"},
+		{name: "missing path", req: SpawnAgentRequest{Dir: filepath.Join(dir, "missing"), Agent: "codex", Prompt: "task", OwnerSession: "owner"}, want: "dir does not exist"},
+		{name: "not a directory", req: SpawnAgentRequest{Dir: file, Agent: "codex", Prompt: "task", OwnerSession: "owner"}, want: "dir must be a directory"},
+		{name: "unknown agent", req: SpawnAgentRequest{Dir: dir, Agent: "other", Prompt: "task", OwnerSession: "owner"}, want: "agent must be codex, claude, or pi"},
+		{name: "empty prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", OwnerSession: "owner"}, want: "prompt is required"},
+		{name: "blank prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: " \n\t", OwnerSession: "owner"}, want: "prompt is required"},
+		{name: "pi flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "--help", OwnerSession: "owner"}, want: "this agent cannot accept a prompt that begins with '-'"},
+		{name: "codex flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: "--help", OwnerSession: "owner"}},
+		{name: "claude flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "claude", Prompt: "--help", OwnerSession: "owner"}},
+		{name: "override allows flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "--help", Command: []string{"custom"}, OwnerSession: "owner"}},
+		{name: "valid", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "task", OwnerSession: "owner"}},
 	}
 
 	for _, tt := range tests {
@@ -96,24 +96,23 @@ func TestResolveSpawnAgentName(t *testing.T) {
 			if requestDir == "" {
 				requestDir = dir
 			}
-			listCalls := 0
 			tm := &Tmux{Run: func(args ...string) (string, error) {
-				if args[0] != "list-sessions" {
-					t.Fatalf("tmux command = %q, want list-sessions", args[0])
+				switch args[0] {
+				case "list-sessions":
+					return "$1\towner\t0\t0\t1\t/tmp\t0", nil
+				case "list-windows":
+					names := make([]string, 0, len(tt.existing))
+					for name := range tt.existing {
+						names = append(names, name)
+					}
+					sort.Strings(names)
+					return strings.Join(names, "\n"), nil
+				default:
+					t.Fatalf("unexpected tmux command %q", args[0])
+					return "", nil
 				}
-				listCalls++
-				names := make([]string, 0, len(tt.existing))
-				for name := range tt.existing {
-					names = append(names, name)
-				}
-				sort.Strings(names)
-				rows := make([]string, 0, len(names))
-				for i, name := range names {
-					rows = append(rows, fmt.Sprintf("$%d\t%s\t0\t0\t1\t/tmp\t0", i, name))
-				}
-				return strings.Join(rows, "\n"), nil
 			}}
-			got, err := tm.resolveSpawnAgentName(SpawnAgentRequest{Dir: requestDir, Name: tt.requestName})
+			got, err := tm.resolveSpawnAgentName(SpawnAgentRequest{Dir: requestDir, Name: tt.requestName, OwnerSession: "owner"})
 			if tt.wantErr != "" {
 				var validationErr *SpawnAgentValidationError
 				if !errors.As(err, &validationErr) {
@@ -122,9 +121,6 @@ func TestResolveSpawnAgentName(t *testing.T) {
 				if err.Error() != tt.wantErr {
 					t.Errorf("error = %q, want %q", err, tt.wantErr)
 				}
-				if listCalls != 0 {
-					t.Errorf("list-sessions calls = %d, want 0", listCalls)
-				}
 				return
 			}
 			if err != nil {
@@ -132,9 +128,6 @@ func TestResolveSpawnAgentName(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("resolveSpawnAgentName() = %q, want %q", got, tt.want)
-			}
-			if listCalls != 1 {
-				t.Errorf("list-sessions calls = %d, want 1", listCalls)
 			}
 		})
 	}
@@ -250,37 +243,6 @@ func TestSpawnAgentCommandEndOfOptions(t *testing.T) {
 	}
 }
 
-func TestSpawnAgentTmuxArguments(t *testing.T) {
-	dir := t.TempDir()
-	var got []string
-	tm := &Tmux{Run: func(args ...string) (string, error) {
-		if args[0] == "list-sessions" {
-			return "", nil
-		}
-		got = append([]string(nil), args...)
-		return "agent %42 @7", nil
-	}}
-
-	result, err := tm.SpawnAgent(SpawnAgentRequest{
-		Dir: dir, Agent: "pi", Prompt: "line one\nline '$TWO'", Name: "agent",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"new-session", "-d", "-s", "agent", "-c", dir,
-		"-P", "-F", spawnAgentFormat, "--", buildSpawnAgentCommand(SpawnAgentRequest{
-			Agent: "pi", Prompt: "line one\nline '$TWO'",
-		}),
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("args = %#v, want %#v", got, want)
-	}
-	if result != (SpawnAgentResult{SessionName: "agent", PaneID: "%42", WindowID: "@7"}) {
-		t.Errorf("result = %#v", result)
-	}
-}
-
 func TestSpawnAgentWindowTmuxArguments(t *testing.T) {
 	dir := t.TempDir()
 	var got []string
@@ -328,13 +290,17 @@ func TestSpawnAgentTmuxErrorIncludesOutput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			tm := &Tmux{Run: func(args ...string) (string, error) {
-				if args[0] == "list-sessions" {
+				switch args[0] {
+				case "list-sessions":
+					return "$1\towner\t0\t0\t1\t/tmp\t0", nil
+				case "list-windows":
 					return "", nil
+				default:
+					return tt.out, tt.err
 				}
-				return tt.out, tt.err
 			}}
 
-			_, err := tm.SpawnAgent(SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: "task", Name: "agent"})
+			_, err := tm.SpawnAgent(SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: "task", Name: "agent", OwnerSession: "owner"})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want %q", err, tt.want)
 			}
@@ -349,7 +315,7 @@ func TestSpawnAgentListSessionsError(t *testing.T) {
 	}}
 
 	_, err := tm.SpawnAgent(SpawnAgentRequest{
-		Dir: dir, Agent: "codex", Prompt: "task", Name: "agent",
+		Dir: dir, Agent: "codex", Prompt: "task", Name: "agent", OwnerSession: "owner",
 	})
 	if err == nil || !strings.Contains(err.Error(), "tmux could not list sessions: tmux unavailable") {
 		t.Fatalf("error = %v, want list-sessions failure", err)
@@ -361,14 +327,18 @@ func TestSpawnAgentRejectsUnexpectedTmuxResult(t *testing.T) {
 		t.Run(output, func(t *testing.T) {
 			dir := t.TempDir()
 			tm := &Tmux{Run: func(args ...string) (string, error) {
-				if args[0] == "list-sessions" {
+				switch args[0] {
+				case "list-sessions":
+					return "$1\towner\t0\t0\t1\t/tmp\t0", nil
+				case "list-windows":
 					return "", nil
+				default:
+					return output, nil
 				}
-				return output, nil
 			}}
 
 			_, err := tm.SpawnAgent(SpawnAgentRequest{
-				Dir: dir, Agent: "codex", Prompt: "task", Name: "agent",
+				Dir: dir, Agent: "codex", Prompt: "task", Name: "agent", OwnerSession: "owner",
 			})
 			if err == nil || err.Error() != "tmux returned an unexpected result" {
 				t.Fatalf("error = %v, want unexpected result", err)
