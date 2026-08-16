@@ -87,7 +87,7 @@ type AgentEvent struct {
 	ToolVerb string `json:"toolVerb,omitempty"`
 	// ToolInvoked marks this event as the START of a new tool call, set by
 	// watchers on their tool-start signal (ccwatch: PreToolUse/
-	// PermissionRequest; piwatch: tool_execution_start). The activity log
+	// PermissionRequest). The activity log
 	// appends a tool entry only when it is set, so repeated identical calls
 	// each count while echoes of one call (PermissionRequest → approved
 	// PreToolUse, PostToolUse keeping the description) don't double-log.

@@ -41,7 +41,7 @@ func TestBuildAgentGlyphs(t *testing.T) {
 			if got["claude-code"] != tt.wantClaude {
 				t.Errorf("claude-code glyph = %q, want %q", got["claude-code"], tt.wantClaude)
 			}
-			want := map[string]string{"pi": "π", "codex": "\U000F02D9", "amp": "♦", "generic": "\U000F167A"}
+			want := map[string]string{"codex": "\U000F02D9", "amp": "♦", "generic": "\U000F167A"}
 			for agent, glyph := range want {
 				if got[agent] != glyph {
 					t.Errorf("%s glyph = %q, want %q", agent, got[agent], glyph)
@@ -58,8 +58,8 @@ func TestPickAgentForWindow(t *testing.T) {
 		want   string
 	}{
 		{"empty defaults to generic", nil, "generic"},
-		{"single agent", []string{"pi"}, "pi"},
-		{"priority: claude-code beats pi", []string{"pi", "claude-code"}, "claude-code"},
+		{"single agent", []string{"codex"}, "codex"},
+		{"priority: claude-code beats codex", []string{"codex", "claude-code"}, "claude-code"},
 		{"priority: codex beats amp", []string{"amp", "codex"}, "codex"},
 		{"unknown agent falls through to first", []string{"mystery", "another"}, "mystery"},
 		{"known beats unknown regardless of order", []string{"mystery", "amp"}, "amp"},
@@ -227,7 +227,7 @@ func TestPlanHeaderSync(t *testing.T) {
 		{
 			name: "dominant agent picked by priority",
 			sessions: sessionsWith(
-				alive("pi", wire.StatusRunning, "%1"),
+				alive("codex", wire.StatusRunning, "%1"),
 				alive("claude-code", wire.StatusIdle, "%2"),
 			),
 			enabled:      true,
@@ -267,7 +267,7 @@ func TestPlanHeaderSync(t *testing.T) {
 			name: "non-alive, pane-less, and unmapped agents are skipped",
 			sessions: sessionsWith(
 				wire.AgentEvent{Agent: "claude-code", Status: wire.StatusRunning, PaneID: "%1", Liveness: wire.LivenessExited},
-				wire.AgentEvent{Agent: "pi", Status: wire.StatusRunning, Liveness: wire.LivenessAlive},
+				wire.AgentEvent{Agent: "codex", Status: wire.StatusRunning, Liveness: wire.LivenessAlive},
 				alive("codex", wire.StatusRunning, "%404"),
 			),
 			enabled:      true,
@@ -319,7 +319,7 @@ func TestPlanHeaderSyncTransparentColour(t *testing.T) {
 	theme := BuiltinTheme("catppuccin-mocha")
 	theme.Palette.Green = "transparent"
 	got := PlanHeaderSync(PlanInput{
-		Sessions:     sessionsWith(alive("pi", wire.StatusIdle, "%1")),
+		Sessions:     sessionsWith(alive("codex", wire.StatusIdle, "%1")),
 		Theme:        theme,
 		Enabled:      true,
 		Glyphs:       BuildAgentGlyphs(false),

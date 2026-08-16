@@ -60,7 +60,6 @@ func BuildAgentGlyphs(clawdInstalled bool) map[string]string {
 	}
 	return map[string]string{
 		"claude-code": claude,
-		"pi":          "π",
 		// nf-md-hexagon_outline — OpenAI's hexagonal mark. Same \U 8-digit
 		// rule as the Clawd glyph above.
 		"codex":   "\U000F02D9",
@@ -71,7 +70,7 @@ func BuildAgentGlyphs(clawdInstalled bool) map[string]string {
 
 // AgentPriority orders agents for the per-window dominant pick
 // (tmux-header-sync.ts AGENT_PRIORITY).
-var AgentPriority = []string{"claude-code", "pi", "codex", "amp"}
+var AgentPriority = []string{"claude-code", "codex", "amp"}
 
 // Statusline-only glyphs: constants the statusline format references in
 // fixed slots, emitted by the palette file as `set -gq @tcm-<name>-glyph`

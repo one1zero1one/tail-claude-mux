@@ -700,8 +700,8 @@ func TestAgentTracker(t *testing.T) {
 	})
 
 	t.Run("pruneTerminal removes idle + exited immediately (no age threshold)", func(t *testing.T) {
-		// The 'opened pi then closed the pane without ever submitting a prompt'
-		// case: such rows must not pile up forever.
+		// The 'opened an agent then closed the pane without ever submitting a
+		// prompt' case: such rows must not pile up forever.
 		tr := New(fixedNow())
 		tr.ApplyEvent(newEvent(wire.AgentEvent{Session: "sess-1", Status: wire.StatusIdle, TS: baseTS, Liveness: wire.LivenessExited}), false)
 		tr.MarkSeen("sess-1")
@@ -1722,12 +1722,12 @@ func TestApplyPanePresenceHysteresis(t *testing.T) {
 
 		// Scanner runs, finds different panes (no claude-code) → seed ghost
 		// transitions to exited via step 3 (NOT step 1 / hysteresis).
-		changed := tr.ApplyPanePresence("sess-1", []PanePresence{{Agent: "pi", PaneID: "%9"}})
+		changed := tr.ApplyPanePresence("sess-1", []PanePresence{{Agent: "codex", PaneID: "%9"}})
 		if !changed {
 			t.Error("changed = false, want true")
 		}
-		// The scan also mints a pi synthetic; look the seed entry up by thread
-		// (the TS test's index-0 access relied on Map insertion order).
+		// The scan also mints a codex synthetic; look the seed entry up by
+		// thread (the TS test's index-0 access relied on Map insertion order).
 		agent := findThread(tr.GetAgents("sess-1"), "abc")
 		if agent == nil {
 			t.Fatal("expected seed entry")

@@ -35,7 +35,6 @@ import (
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/codexwatch"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/gitinfo"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/panescan"
-	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/piwatch"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/server"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/sessionorder"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/state"
@@ -87,7 +86,6 @@ func main() {
 	} else {
 		log.Printf("claude root unavailable, hook watcher disabled: %v", err)
 	}
-	piWatcher := piwatch.New(filepath.Join(home, ".pi", "agent", "sessions"))
 	var codexWatcher *codexwatch.Adapter
 	if root, err := codexdir.DefaultRoot(); err == nil {
 		codexWatcher = codexwatch.New(root.SessionsDir(), root.SessionIndexPath())
@@ -95,7 +93,7 @@ func main() {
 		log.Printf("codex root unavailable, hook watcher disabled: %v", err)
 	}
 
-	srv := server.New(builder, tracker.New(), watcher, piWatcher, codexWatcher, panescan.New())
+	srv := server.New(builder, tracker.New(), watcher, codexWatcher, panescan.New())
 	srv.BuildInfo = buildInfo()
 	srv.Restart = restartInPlace
 	srv.Quit = func() {

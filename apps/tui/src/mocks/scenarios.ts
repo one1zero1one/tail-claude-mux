@@ -139,12 +139,12 @@ const aiEngineeringTemplate = makeSession({
   agents: [readyAgent({ agent: "generic", session: "ai-engineering-template" })],
 });
 
-const piMono = makeSession({
-  name: "pi-mono",
+const codexCli = makeSession({
+  name: "codex-cli",
   branch: "main",
   agents: [
-    readyAgent({ agent: "pi", session: "pi-mono", threadId: "20cd0001-aaaa-aaaa-aaaa-000000000000" }),
-    readyAgent({ agent: "pi", session: "pi-mono", threadId: "20de0001-aaaa-aaaa-aaaa-000000000000" }),
+    readyAgent({ agent: "codex", session: "codex-cli", threadId: "20cd0001-aaaa-aaaa-aaaa-000000000000" }),
+    readyAgent({ agent: "codex", session: "codex-cli", threadId: "20de0001-aaaa-aaaa-aaaa-000000000000" }),
   ],
 });
 
@@ -153,13 +153,13 @@ const tcmLive = makeSession({
   branch: "main",
   agents: [
     workingAgent({
-      agent: "pi",
+      agent: "codex",
       session: "tcm",
       threadId: "15c80001-aaaa-aaaa-aaaa-000000000000",
       toolDescription: "ask_user",
     }),
     readyAgent({
-      agent: "pi",
+      agent: "codex",
       session: "tcm",
       threadId: "10bc0001-aaaa-aaaa-aaaa-000000000000",
     }),
@@ -193,7 +193,7 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
   quiet: {
     name: "quiet",
     description: "5 sessions, tcm focused with 4 ready agents, no recent activity.",
-    sessions: [aiEngineeringTemplate, piMono, tcmLive, claudeCodeSystem, theThemerReady],
+    sessions: [aiEngineeringTemplate, codexCli, tcmLive, claudeCodeSystem, theThemerReady],
     focusedSession: "tcm",
     currentSession: "tcm",
     paneFocused: true,
@@ -204,17 +204,17 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
     description: "Same dataset; tcm has a populated activity buffer including a multi-line skill prompt.",
     sessions: [
       aiEngineeringTemplate,
-      piMono,
+      codexCli,
       {
         ...tcmLive,
         metadata: {
           status: { text: "ask_user", tone: "info", ts: NOW },
           progress: null,
           logs: [
-            { message: "ask_user", source: "pi 15c8", tone: "info", ts: NOW - 1000 },
+            { message: "ask_user", source: "cd 15c8", tone: "info", ts: NOW - 1000 },
             { message: "Base directory for this skill: /Users/kyle/.local/share/skills/tcm-redesign", source: "cc 1859", tone: "neutral", ts: NOW - 5000 },
             { message: "ran  bun test (passed)", source: "cc 1859", tone: "success", ts: NOW - 30000 },
-            { message: "awaiting input", source: "pi 10bc", tone: "info", ts: NOW - 60000 },
+            { message: "awaiting input", source: "cd 10bc", tone: "info", ts: NOW - 60000 },
           ],
         },
       },
@@ -228,17 +228,17 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
 
   errored: {
     name: "errored",
-    description: "pi-mono is focused; the-themer has an errored generic agent.",
+    description: "codex-cli is focused; the-themer has an errored generic agent.",
     sessions: [
       aiEngineeringTemplate,
       {
-        ...piMono,
+        ...codexCli,
         metadata: {
           status: null,
           progress: null,
           logs: [
-            { message: "saw new file", source: "pi 20cd", tone: "neutral", ts: NOW - 5000 },
-            { message: "ran  pytest (passed)", source: "pi 20de", tone: "success", ts: NOW - 30000 },
+            { message: "saw new file", source: "cd 20cd", tone: "neutral", ts: NOW - 5000 },
+            { message: "ran  pytest (passed)", source: "cd 20de", tone: "success", ts: NOW - 30000 },
           ],
         },
       },
@@ -246,15 +246,15 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
       claudeCodeSystem,
       theThemerErrored,
     ],
-    focusedSession: "pi-mono",
-    currentSession: "pi-mono",
+    focusedSession: "codex-cli",
+    currentSession: "codex-cli",
     paneFocused: true,
   },
 
   unfocused: {
     name: "unfocused",
     description: "Same as quiet but the panel pane is unfocused (no FOCUS chip).",
-    sessions: [aiEngineeringTemplate, piMono, tcmLive, claudeCodeSystem, theThemerReady],
+    sessions: [aiEngineeringTemplate, codexCli, tcmLive, claudeCodeSystem, theThemerReady],
     focusedSession: "tcm",
     currentSession: "tcm",
     paneFocused: false,
@@ -268,7 +268,7 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
     description: "tcm focused; no logs at all (Sparkline State 1 sub-case i — idle).",
     sessions: [
       aiEngineeringTemplate,
-      piMono,
+      codexCli,
       {
         ...tcmLive,
         metadata: { status: null, progress: null, logs: [] },
@@ -286,17 +286,17 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
     description: "tcm focused; logs > 64 s old (Sparkline State 1 sub-case ii — wedged, shows ·Nm suffix).",
     sessions: [
       aiEngineeringTemplate,
-      piMono,
+      codexCli,
       {
         ...tcmLive,
         metadata: {
           status: null,
           progress: null,
           logs: [
-            { message: "Reading build.ts",       source: "pi db92", tone: "neutral", ts: NOW - 15 * 60_000 },
-            { message: "Reading tsconfig.json",  source: "pi db92", tone: "neutral", ts: NOW - 15 * 60_000 - 4_000 },
-            { message: "Reading package.json",   source: "pi db92", tone: "neutral", ts: NOW - 15 * 60_000 - 8_000 },
-            { message: "Searching ActivityZone", source: "pi db92", tone: "neutral", ts: NOW - 15 * 60_000 - 12_000 },
+            { message: "Reading build.ts",       source: "cd db92", tone: "neutral", ts: NOW - 15 * 60_000 },
+            { message: "Reading tsconfig.json",  source: "cd db92", tone: "neutral", ts: NOW - 15 * 60_000 - 4_000 },
+            { message: "Reading package.json",   source: "cd db92", tone: "neutral", ts: NOW - 15 * 60_000 - 8_000 },
+            { message: "Searching ActivityZone", source: "cd db92", tone: "neutral", ts: NOW - 15 * 60_000 - 12_000 },
           ],
         },
       },
@@ -310,22 +310,22 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
 
   "activity-single": {
     name: "activity-single",
-    description: "tcm focused; single-source steady run — 6 reads from pi db92 within 60 s (State 2).",
+    description: "tcm focused; single-source steady run — 6 reads from cd db92 within 60 s (State 2).",
     sessions: [
       aiEngineeringTemplate,
-      piMono,
+      codexCli,
       {
         ...tcmLive,
         metadata: {
           status: null,
           progress: null,
           logs: [
-            { message: "Reading tiers.ts",        source: "pi db92", tone: "neutral", ts: NOW - 2_000 },
-            { message: "Searching ActivityZone",  source: "pi db92", tone: "neutral", ts: NOW - 12_000 },
-            { message: "Reading scenarios.ts",    source: "pi db92", tone: "neutral", ts: NOW - 22_000 },
-            { message: "Reading package.json",    source: "pi db92", tone: "neutral", ts: NOW - 32_000 },
-            { message: "Reading tsconfig.json",   source: "pi db92", tone: "neutral", ts: NOW - 44_000 },
-            { message: "Reading build.ts",        source: "pi db92", tone: "neutral", ts: NOW - 56_000 },
+            { message: "Reading tiers.ts",        source: "cd db92", tone: "neutral", ts: NOW - 2_000 },
+            { message: "Searching ActivityZone",  source: "cd db92", tone: "neutral", ts: NOW - 12_000 },
+            { message: "Reading scenarios.ts",    source: "cd db92", tone: "neutral", ts: NOW - 22_000 },
+            { message: "Reading package.json",    source: "cd db92", tone: "neutral", ts: NOW - 32_000 },
+            { message: "Reading tsconfig.json",   source: "cd db92", tone: "neutral", ts: NOW - 44_000 },
+            { message: "Reading build.ts",        source: "cd db92", tone: "neutral", ts: NOW - 56_000 },
           ],
         },
       },
@@ -339,21 +339,21 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
 
   "activity-multi": {
     name: "activity-multi",
-    description: "tcm focused; pi/cc multi-source interleave — chip mode throughout (State 3).",
+    description: "tcm focused; cd/cc multi-source interleave — chip mode throughout (State 3).",
     sessions: [
       aiEngineeringTemplate,
-      piMono,
+      codexCli,
       {
         ...tcmLive,
         metadata: {
           status: null,
           progress: null,
           logs: [
-            { message: "Reading build.ts",       source: "pi db92", tone: "neutral", ts: NOW - 4_000 },
+            { message: "Reading build.ts",       source: "cd db92", tone: "neutral", ts: NOW - 4_000 },
             { message: "Reading types.ts",       source: "cc 1859", tone: "neutral", ts: NOW - 11_000 },
-            { message: "Reading scenarios.ts",   source: "pi db92", tone: "neutral", ts: NOW - 18_000 },
+            { message: "Reading scenarios.ts",   source: "cd db92", tone: "neutral", ts: NOW - 18_000 },
             { message: "Editing index.tsx",      source: "cc 1859", tone: "neutral", ts: NOW - 25_000 },
-            { message: "Reading vocab.ts",       source: "pi db92", tone: "neutral", ts: NOW - 33_000 },
+            { message: "Reading vocab.ts",       source: "cd db92", tone: "neutral", ts: NOW - 33_000 },
             { message: "Reading tiers.ts",       source: "cc 1859", tone: "neutral", ts: NOW - 41_000 },
           ],
         },
@@ -371,18 +371,18 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
     description: "tcm focused; error-heavy cascade — 4 failed rows + 1 surviving read (State 4).",
     sessions: [
       aiEngineeringTemplate,
-      piMono,
+      codexCli,
       {
         ...tcmLive,
         metadata: {
           status: null,
           progress: null,
           logs: [
-            { message: "Editing src/index.tsx (failed)", source: "pi 15c8", tone: "error",   ts: NOW - 2_000 },
-            { message: "Editing types.ts (failed)",      source: "pi 15c8", tone: "error",   ts: NOW - 8_000 },
-            { message: "Reading tsconfig.json",          source: "pi 15c8", tone: "neutral", ts: NOW - 18_000 },
-            { message: "Editing vocab.ts (failed)",      source: "pi 15c8", tone: "error",   ts: NOW - 28_000 },
-            { message: "Editing tiers.ts (failed)",      source: "pi 15c8", tone: "error",   ts: NOW - 40_000 },
+            { message: "Editing src/index.tsx (failed)", source: "cd 15c8", tone: "error",   ts: NOW - 2_000 },
+            { message: "Editing types.ts (failed)",      source: "cd 15c8", tone: "error",   ts: NOW - 8_000 },
+            { message: "Reading tsconfig.json",          source: "cd 15c8", tone: "neutral", ts: NOW - 18_000 },
+            { message: "Editing vocab.ts (failed)",      source: "cd 15c8", tone: "error",   ts: NOW - 28_000 },
+            { message: "Editing tiers.ts (failed)",      source: "cd 15c8", tone: "error",   ts: NOW - 40_000 },
           ],
         },
       },
@@ -399,7 +399,7 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
     description: "tcm focused; varied per-bucket volume (1/2/4/6/14 events) — exercises the sqrt y-axis and the histogram overflow row.",
     sessions: [
       aiEngineeringTemplate,
-      piMono,
+      codexCli,
       {
         ...tcmLive,
         metadata: {
@@ -407,16 +407,16 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
           progress: null,
           logs: [
             // 1 event ~4 s ago → small bump
-            { message: "Reading build.ts", source: "pi db92", tone: "neutral", ts: NOW - 4_000 },
+            { message: "Reading build.ts", source: "cd db92", tone: "neutral", ts: NOW - 4_000 },
             // 2 events ~20 s ago
-            ...burstLogs(2, NOW - 20_000, "Searching ActivityZone", "pi db92"),
+            ...burstLogs(2, NOW - 20_000, "Searching ActivityZone", "cd db92"),
             // 4 events ~36 s ago → full bottom row
             ...burstLogs(4, NOW - 36_000, "Editing index.tsx", "cc 1859"),
             // 6 events ~52 s ago, one failed → red cross + overflow-row bar
             ...burstLogs(5, NOW - 52_000, "Running bun test", "cc 1859"),
             { message: "Running bun test (failed)", source: "cc 1859", tone: "error", ts: NOW - 52_500 },
             // 14 events ~68 s ago → full two-row tower
-            ...burstLogs(14, NOW - 68_000, "Ran rg --json vocab", "pi db92"),
+            ...burstLogs(14, NOW - 68_000, "Ran rg --json vocab", "cd db92"),
           ],
         },
       },
@@ -433,19 +433,19 @@ export const MOCK_SCENARIOS: Record<string, MockScenario> = {
     description: "tcm focused; system-tag [bell] precedence — the bell shares its bucket with a NEWER read and must still render (attention signals are never swallowed).",
     sessions: [
       aiEngineeringTemplate,
-      piMono,
+      codexCli,
       {
         ...tcmLive,
         metadata: {
           status: null,
           progress: null,
           logs: [
-            { message: "Reading build.ts",         source: "pi db92", tone: "neutral", ts: NOW - 3_000 },
+            { message: "Reading build.ts",         source: "cd db92", tone: "neutral", ts: NOW - 3_000 },
             // Same 8 s bucket as the bell below, but newer — the bell must win.
-            { message: "Reading header.tmux",      source: "pi db92", tone: "neutral", ts: NOW - 8_500 },
+            { message: "Reading header.tmux",      source: "cd db92", tone: "neutral", ts: NOW - 8_500 },
             { message: "awaiting confirmation",    source: "[bell]",  tone: "warn",    ts: NOW - 9_000 },
-            { message: "Reading tsconfig.json",    source: "pi db92", tone: "neutral", ts: NOW - 22_000 },
-            { message: "Reading scenarios.ts",     source: "pi db92", tone: "neutral", ts: NOW - 32_000 },
+            { message: "Reading tsconfig.json",    source: "cd db92", tone: "neutral", ts: NOW - 22_000 },
+            { message: "Reading scenarios.ts",     source: "cd db92", tone: "neutral", ts: NOW - 32_000 },
           ],
         },
       },

@@ -176,28 +176,28 @@ func TestResolveAgentSessionPidFromSnapshot(t *testing.T) {
 }
 
 func TestResolveSessionByPid(t *testing.T) {
-	// Realistic chain: tmux pane shell (89112) → bash spawning pi (89539)
-	//                 → pi process (89555).
+	// Realistic chain: tmux pane shell (89112) → bash spawning codex (89539)
+	//                 → codex process (89555).
 	// Mirrors the live ps tree captured during bug repro.
 	snapshot := ParseProcessSnapshot(lines(
 		"    1     0 launchd",
 		"89112     1 bash",
-		"89539 89112 /bin/sh /usr/bin/command pi",
-		"89555 89539 pi",
+		"89539 89112 /bin/sh /usr/bin/command codex",
+		"89555 89539 codex",
 	))
 
-	panePidIndex := map[int]string{89112: "pi-dev"}
+	panePidIndex := map[int]string{89112: "codex-dev"}
 
-	t.Run("walks up from pi pid to its pane and returns the session", func(t *testing.T) {
-		if got := ResolveSessionByPid(89555, panePidIndex, snapshot); got != "pi-dev" {
-			t.Errorf("got %q, want pi-dev", got)
+	t.Run("walks up from codex pid to its pane and returns the session", func(t *testing.T) {
+		if got := ResolveSessionByPid(89555, panePidIndex, snapshot); got != "codex-dev" {
+			t.Errorf("got %q, want codex-dev", got)
 		}
 	})
 
 	t.Run("walks through wrapper layers", func(t *testing.T) {
 		// Same chain, lookup from the middle wrapper still resolves.
-		if got := ResolveSessionByPid(89539, panePidIndex, snapshot); got != "pi-dev" {
-			t.Errorf("got %q, want pi-dev", got)
+		if got := ResolveSessionByPid(89539, panePidIndex, snapshot); got != "codex-dev" {
+			t.Errorf("got %q, want codex-dev", got)
 		}
 	})
 
@@ -216,7 +216,7 @@ func TestResolveSessionByPid(t *testing.T) {
 		orphanSnapshot := ParseProcessSnapshot(lines(
 			"    1     0 launchd",
 			"55555     1 some-daemon",
-			"55556 55555 pi",
+			"55556 55555 codex",
 		))
 		if got := ResolveSessionByPid(55556, panePidIndex, orphanSnapshot); got != "" {
 			t.Errorf("got %q, want \"\"", got)
@@ -224,15 +224,15 @@ func TestResolveSessionByPid(t *testing.T) {
 	})
 
 	t.Run("multi-session: each pane resolves to its own session", func(t *testing.T) {
-		multiIndex := map[int]string{89112: "pi-dev", 5055: "ai-eng"}
+		multiIndex := map[int]string{89112: "codex-dev", 5055: "ai-eng"}
 		multiSnapshot := ParseProcessSnapshot(lines(
 			"89112     1 bash",
-			"89555 89112 pi",
+			"89555 89112 codex",
 			" 5055     1 bash",
 			" 7762  5055 bun",
 		))
-		if got := ResolveSessionByPid(89555, multiIndex, multiSnapshot); got != "pi-dev" {
-			t.Errorf("got %q, want pi-dev", got)
+		if got := ResolveSessionByPid(89555, multiIndex, multiSnapshot); got != "codex-dev" {
+			t.Errorf("got %q, want codex-dev", got)
 		}
 		if got := ResolveSessionByPid(7762, multiIndex, multiSnapshot); got != "ai-eng" {
 			t.Errorf("got %q, want ai-eng", got)
@@ -263,22 +263,22 @@ func TestResolveSessionByPid(t *testing.T) {
 
 func TestLiveBugScenarioReproduction(t *testing.T) {
 	// Coordinates from the live system at bug repro time:
-	//   pi-dev session has panes with pane_pids including 89112 (the bash
-	//   hosting pi 89555). pi 89555 emits hooks; pid-based resolution should
-	//   return "pi-dev" regardless of where the active pane has navigated.
-	t.Run("pi 89555 resolves to pi-dev even when active pane cwd diverges", func(t *testing.T) {
+	//   codex-dev session has panes with pane_pids including 89112 (the bash
+	//   hosting codex 89555). codex 89555 emits hooks; pid-based resolution should
+	//   return "codex-dev" regardless of where the active pane has navigated.
+	t.Run("codex 89555 resolves to codex-dev even when active pane cwd diverges", func(t *testing.T) {
 		snapshot := ParseProcessSnapshot(lines(
 			"89112     1 bash",
-			"89539 89112 /bin/sh /usr/bin/command pi",
-			"89555 89539 pi",
+			"89539 89112 /bin/sh /usr/bin/command codex",
+			"89555 89539 codex",
 		))
-		// Only pi-dev runs pi here. The fact that pi-dev's active pane is
+		// Only codex-dev runs codex here. The fact that codex-dev's active pane is
 		// currently in /Users/kyle/Code/my-projects/kylesnowschwartz.github.io
 		// is irrelevant — we route by pid, not by path.
-		panePidIndex := map[int]string{89112: "pi-dev"}
+		panePidIndex := map[int]string{89112: "codex-dev"}
 
-		if got := ResolveSessionByPid(89555, panePidIndex, snapshot); got != "pi-dev" {
-			t.Errorf("got %q, want pi-dev", got)
+		if got := ResolveSessionByPid(89555, panePidIndex, snapshot); got != "codex-dev" {
+			t.Errorf("got %q, want codex-dev", got)
 		}
 	})
 }

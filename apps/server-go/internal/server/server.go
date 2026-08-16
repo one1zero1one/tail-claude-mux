@@ -33,7 +33,6 @@ import (
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/explain"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/metadata"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/panescan"
-	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/piwatch"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/state"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/theming"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/tmux"
@@ -49,7 +48,6 @@ type Server struct {
 	Builder      *state.Builder
 	Tracker      *tracker.Tracker
 	Watcher      *ccwatch.Adapter
-	PiWatcher    *piwatch.Adapter
 	CodexWatcher *codexwatch.Adapter
 	Scanner      *panescan.Scanner
 	Metadata     *metadata.Store
@@ -114,14 +112,14 @@ type client struct {
 
 // New returns a Server around the builder and agent pipeline. Tracker is
 // required; watchers and scanner may be nil (tests).
-func New(b *state.Builder, tr *tracker.Tracker, w *ccwatch.Adapter, pi *piwatch.Adapter, codex *codexwatch.Adapter, sc *panescan.Scanner) *Server {
+func New(b *state.Builder, tr *tracker.Tracker, w *ccwatch.Adapter, codex *codexwatch.Adapter, sc *panescan.Scanner) *Server {
 	if tr != nil {
 		b.Agents = tr
 	}
 	md := metadata.NewStore()
 	b.Metadata = md
 	return &Server{
-		Builder: b, Tracker: tr, Watcher: w, PiWatcher: pi, CodexWatcher: codex, Scanner: sc, Metadata: md,
+		Builder: b, Tracker: tr, Watcher: w, CodexWatcher: codex, Scanner: sc, Metadata: md,
 		clients:          map[*client]bool{},
 		lastSeenByThread: map[string]lastSeen{},
 	}
@@ -284,9 +282,6 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		if s.Watcher != nil {
 			s.Watcher.HandleHook(p)
-		}
-		if s.PiWatcher != nil {
-			s.PiWatcher.HandleHook(p)
 		}
 		if s.CodexWatcher != nil {
 			s.CodexWatcher.HandleHook(p)

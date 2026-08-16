@@ -79,7 +79,7 @@ func TestProbeLivenessRoutesByAgent(t *testing.T) {
 	if codex.calls != 1 || claude.calls != 1 {
 		t.Fatalf("calls after claude probe = claude %d, codex %d", claude.calls, codex.calls)
 	}
-	if got := probeLivenessFromSources(wire.AgentEvent{Agent: "pi", PID: 44}, sources...); got != tracker.ProbeNoSignal {
+	if got := probeLivenessFromSources(wire.AgentEvent{Agent: "other", PID: 44}, sources...); got != tracker.ProbeNoSignal {
 		t.Fatalf("unknown-agent verdict = %v, want ProbeNoSignal", got)
 	}
 }

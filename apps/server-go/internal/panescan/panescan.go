@@ -33,7 +33,6 @@ var AgentCommPatterns = []AgentPattern{
 	{Name: "claude-code", Patterns: []string{"claude"}},
 	{Name: "codex", Patterns: []string{"codex"}},
 	{Name: "opencode", Patterns: []string{"opencode"}},
-	{Name: "pi", Patterns: []string{"pi"}},
 }
 
 const maxTreeDepth = 2
@@ -97,7 +96,7 @@ func (s *Scanner) buildProcessTree() processTree {
 
 // pidMatchesAgent reports whether one pid's process matches the agent —
 // comm patterns first, then the AgentFromCommand wrapper fallback (which
-// only knows pi and claude-code, preserving comm-only behavior for
+// only knows claude-code, preserving comm-only behavior for
 // amp/codex/opencode).
 func pidMatchesAgent(pid int, patterns []string, agentName string, tree processTree) bool {
 	comm := tree.commOf[pid]
@@ -149,8 +148,8 @@ func KnownAgent(name string) bool {
 // maxTreeDepth) matching agentName — comm boundary rules plus the
 // AgentFromCommand wrapper fallback, the same matcher Scan discovers
 // agents with. (The bun original verifies by comm only; using the
-// discovery matcher here means wrapper-launched agents like node-wrapped
-// pi verify by the rules that found them.) Fresh ps snapshots on every
+// discovery matcher here means wrapper-launched agents like nix-wrapped
+// claude verify by the rules that found them.) Fresh ps snapshots on every
 // call, on purpose: pane contents mutate on pane recycling, and the kill
 // gate exists to catch exactly that staleness.
 func (s *Scanner) AgentPidsByPane(panes []tmux.Pane, agentName string) map[string][]int {

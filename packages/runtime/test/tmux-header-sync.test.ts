@@ -107,7 +107,7 @@ describe("buildAgentGlyphs (Clawd detection)", () => {
   test("non-clawd glyphs are unaffected by detection state", () => {
     const installed = buildAgentGlyphs({ clawdInstalled: true });
     const missing = buildAgentGlyphs({ clawdInstalled: false });
-    for (const key of ["pi", "codex", "amp", "generic"]) {
+    for (const key of ["codex", "amp", "generic"]) {
       expect(installed[key]).toBe(missing[key]!);
     }
   });
@@ -118,8 +118,8 @@ describe("buildAgentGlyphs (Clawd detection)", () => {
 });
 
 describe("pickAgentForWindow (E1, E2)", () => {
-  test("E1: precedence picks claude-code over pi", () => {
-    expect(pickAgentForWindow(["pi", "claude-code"])).toBe("claude-code");
+  test("E1: precedence picks claude-code over codex", () => {
+    expect(pickAgentForWindow(["codex", "claude-code"])).toBe("claude-code");
   });
 
   test("E2: empty input returns generic", () => {
@@ -127,7 +127,6 @@ describe("pickAgentForWindow (E1, E2)", () => {
   });
 
   test("respects the full priority order", () => {
-    expect(pickAgentForWindow(["amp", "codex", "pi"])).toBe("pi");
     expect(pickAgentForWindow(["amp", "codex"])).toBe("codex");
     expect(pickAgentForWindow(["amp"])).toBe("amp");
   });
@@ -155,18 +154,18 @@ describe("planTmuxHeaderSync", () => {
     expect(out.newWindows.get("@1")).toEqual({ glyph: AGENT_GLYPHS["claude-code"]!, fg: BLUE, agent: "claude-code" });
   });
 
-  test("S2: pi agent emits the pi glyph", () => {
-    const sessions = [makeSession("s1", [makeAgent({ agent: "pi", session: "s1", paneId: "%20" })])];
+  test("S2: codex agent emits the codex glyph", () => {
+    const sessions = [makeSession("s1", [makeAgent({ agent: "codex", session: "s1", paneId: "%20" })])];
     const paneToWindow = new Map([["%20", "@5"]]);
     const out = planTmuxHeaderSync(emptyInput({ sessions, paneToWindow }));
-    expect(out.newWindows.get("@5")?.glyph).toBe(AGENT_GLYPHS["pi"]!);
-    expect(out.newWindows.get("@5")?.agent).toBe("pi");
+    expect(out.newWindows.get("@5")?.glyph).toBe(AGENT_GLYPHS["codex"]!);
+    expect(out.newWindows.get("@5")?.agent).toBe("codex");
   });
 
-  test("S3: window with pi + claude-code resolves to claude-code (precedence)", () => {
+  test("S3: window with codex + claude-code resolves to claude-code (precedence)", () => {
     const sessions = [
       makeSession("s1", [
-        makeAgent({ agent: "pi", session: "s1", paneId: "%30" }),
+        makeAgent({ agent: "codex", session: "s1", paneId: "%30" }),
         makeAgent({ agent: "claude-code", session: "s1", paneId: "%31" }),
       ]),
     ];
@@ -384,7 +383,7 @@ describe("planTmuxHeaderSync severity-aware fg", () => {
   });
 
   test("errored agent emits @tcm-agent-fg = red", () => {
-    const sessions = [makeSession("s1", [makeAgent({ agent: "pi", session: "s1", paneId: "%20", status: "error" })])];
+    const sessions = [makeSession("s1", [makeAgent({ agent: "amp", session: "s1", paneId: "%20", status: "error" })])];
     const paneToWindow = new Map([["%20", "@2"]]);
     const out = planTmuxHeaderSync(emptyInput({ sessions, paneToWindow }));
     expect(out.newWindows.get("@2")?.fg).toBe(RED);
@@ -397,11 +396,11 @@ describe("planTmuxHeaderSync severity-aware fg", () => {
     expect(out.newWindows.get("@3")?.fg).toBe(GREEN);
   });
 
-  test("severity uses the dominant agent (claude-code precedence over pi)", () => {
-    // Window has waiting pi + working claude-code. Dominant agent is
+  test("severity uses the dominant agent (claude-code precedence over codex)", () => {
+    // Window has waiting codex + working claude-code. Dominant agent is
     // claude-code by precedence; fg should reflect claude-code's working.
     const sessions = [makeSession("s1", [
-      makeAgent({ agent: "pi", session: "s1", paneId: "%40", status: "waiting" }),
+      makeAgent({ agent: "codex", session: "s1", paneId: "%40", status: "waiting" }),
       makeAgent({ agent: "claude-code", session: "s1", paneId: "%41", status: "running" }),
     ])];
     const paneToWindow = new Map([["%40", "@4"], ["%41", "@4"]]);

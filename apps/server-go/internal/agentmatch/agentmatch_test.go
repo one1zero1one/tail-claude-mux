@@ -6,8 +6,9 @@ package agentmatch
 import "testing"
 
 // Ported from herdr's `identify_agent_in_job` test suite (src/detect/mod.rs),
-// narrowed to the two agents tcm receives hooks from. Each case is a wrapper
-// invocation that the comm-only fast path (CommMatches) would miss.
+// narrowed to the agent tcm receives hooks from via the fallback path. Each
+// case is a wrapper invocation that the comm-only fast path (CommMatches)
+// would miss.
 func TestAgentFromCommandWrapperIdentification(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -15,18 +16,6 @@ func TestAgentFromCommandWrapperIdentification(t *testing.T) {
 		cmdline string
 		want    string
 	}{
-		{
-			name:    "node-wrapped pi package CLI (comm=node)",
-			comm:    "node",
-			cmdline: "node /Users/x/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
-			want:    AgentPi,
-		},
-		{
-			name:    "bun-wrapped pi package CLI (comm=bun)",
-			comm:    "bun",
-			cmdline: "bun /opt/node_modules/@earendil-works/pi-coding-agent/dist/cli.js --resume",
-			want:    AgentPi,
-		},
 		{
 			name:    "nix-wrapped claude — comm is .claude-code-wrapped, argv0 resolves to claude-code",
 			comm:    ".claude-code-wrapped",
@@ -38,12 +27,6 @@ func TestAgentFromCommandWrapperIdentification(t *testing.T) {
 			comm:    ".claude-code-wrapped",
 			cmdline: "/nix/store/abc/bin/claude-code --resume xyz",
 			want:    AgentClaudeCode,
-		},
-		{
-			name:    "shell-wrapped pi (comm=sh, script path basename = pi)",
-			comm:    "sh",
-			cmdline: "/bin/sh /tmp/test-bin/pi",
-			want:    AgentPi,
 		},
 		{
 			name:    "npx-wrapped claude (bare package name)",
@@ -67,8 +50,8 @@ func TestAgentFromCommandWrapperIdentification(t *testing.T) {
 		{
 			name:    "script after `--` separator",
 			comm:    "node",
-			cmdline: "node -- /opt/bin/pi",
-			want:    AgentPi,
+			cmdline: "node -- /opt/bin/claude",
+			want:    AgentClaudeCode,
 		},
 	}
 	for _, tc := range cases {
@@ -99,12 +82,7 @@ func TestAgentFromCommandFalsePositiveRejection(t *testing.T) {
 		{
 			name:    "python -m module is rejected",
 			comm:    "python",
-			cmdline: "python -m pi",
-		},
-		{
-			name:    "pip (commMatches false-positive sibling) is not pi",
-			comm:    "pip",
-			cmdline: "/usr/bin/pip install pi",
+			cmdline: "python -m claude",
 		},
 		{
 			name:    "a directory named meta-claude in an unrelated command does not match",
@@ -112,16 +90,12 @@ func TestAgentFromCommandFalsePositiveRejection(t *testing.T) {
 			cmdline: "node /Users/x/Code/meta-claude/build.js",
 		},
 		{
-			name:    "partial package path (missing dist/cli) is not pi",
-			comm:    "node",
-			cmdline: "node /x/node_modules/@earendil-works/pi-coding-agent/package.json",
-		},
-		{
-			// vim opening a file named pi must not be identified as the pi agent —
-			// vim is not a generic runtime, so script-arg walking never runs.
+			// vim opening a file named claude must not be identified as the
+			// claude agent — vim is not a generic runtime, so script-arg
+			// walking never runs.
 			name:    "a non-runtime comm that is not an agent does not match via script args",
 			comm:    "vim",
-			cmdline: "vim /tmp/pi",
+			cmdline: "vim /tmp/claude",
 		},
 	}
 	for _, tc := range cases {
@@ -149,13 +123,11 @@ func TestAgentFromCommandFalsePositiveRejection(t *testing.T) {
 	})
 }
 
-// Boundary regression suite for CommMatches. The matcher used to enforce only
-// a left boundary (path separator or start-of-string), which was fine for
-// 4+ character patterns but shipped a bug for the new "pi" pattern: any
-// command name starting with "pi" — pip, ping, pipx, pipenv, /usr/bin/pip —
-// matched. After the fix the matcher also requires a right boundary
-// (end-of-string OR hyphen). The hyphen exception preserves the intentional
-// prefix matches like "claude" → "claude-code".
+// Boundary regression suite for CommMatches: the matcher enforces both a
+// left boundary (path separator or start-of-string) and a right boundary
+// (end-of-string OR hyphen) so short patterns don't greedily prefix-match
+// longer commands. The hyphen exception preserves the intentional prefix
+// matches like "claude" → "claude-code".
 func TestCommMatchesBoundaryRules(t *testing.T) {
 	check := func(t *testing.T, comm, pat string, want bool) {
 		t.Helper()
@@ -165,7 +137,6 @@ func TestCommMatchesBoundaryRules(t *testing.T) {
 	}
 
 	t.Run("exact basename match (no prefix)", func(t *testing.T) {
-		check(t, "pi", "pi", true)
 		check(t, "claude", "claude", true)
 		check(t, "amp", "amp", true)
 		check(t, "codex", "codex", true)
@@ -173,7 +144,6 @@ func TestCommMatchesBoundaryRules(t *testing.T) {
 	})
 
 	t.Run("path-prefixed exact basename", func(t *testing.T) {
-		check(t, "/usr/bin/pi", "pi", true)
 		check(t, "/usr/local/bin/claude", "claude", true)
 		check(t, "/opt/codex", "codex", true)
 		check(t, "/opt/homebrew/bin/codex", "codex", true)
@@ -187,24 +157,13 @@ func TestCommMatchesBoundaryRules(t *testing.T) {
 	t.Run("hyphen-suffix is part of the same word — preserves intentional prefix matches", func(t *testing.T) {
 		check(t, "claude-code", "claude", true)
 		check(t, "amp-cli", "amp", true)
-		check(t, "pi-mono", "pi", true)
 		check(t, "codex-tui", "codex", true)
 		check(t, "/usr/bin/claude-code", "claude", true)
-	})
-
-	t.Run("M3 regression: short patterns must not greedily prefix-match longer commands", func(t *testing.T) {
-		check(t, "pip", "pi", false)
-		check(t, "pipx", "pi", false)
-		check(t, "ping", "pi", false)
-		check(t, "pipenv", "pi", false)
-		check(t, "/usr/bin/pip", "pi", false)
-		check(t, "/usr/local/bin/pipenv", "pi", false)
 	})
 
 	t.Run("substring matches in the middle of a name do not count", func(t *testing.T) {
 		check(t, "tail-claude", "claude", false)
 		check(t, "my-claude-fork", "claude", false)
-		check(t, "xyz-pi", "pi", false)
 	})
 
 	t.Run("non-hyphen suffixes (dots, digits, dashes-elsewhere) do not match", func(t *testing.T) {
@@ -216,7 +175,7 @@ func TestCommMatchesBoundaryRules(t *testing.T) {
 	})
 
 	t.Run("returns false on no match", func(t *testing.T) {
-		check(t, "nodejs", "pi", false)
-		check(t, "", "pi", false)
+		check(t, "nodejs", "codex", false)
+		check(t, "", "codex", false)
 	})
 }

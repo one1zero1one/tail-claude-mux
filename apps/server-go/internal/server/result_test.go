@@ -76,8 +76,8 @@ func TestResultUnknownSessionIsJSON404(t *testing.T) {
 
 func TestResultSelectsPaneInMultiAgentSession(t *testing.T) {
 	tr := tracker.New()
-	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "pi", ThreadID: "one", PaneID: "%1", Status: wire.StatusDone}, false)
-	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "pi", ThreadID: "two", PaneID: "%2", Status: wire.StatusWaiting}, false)
+	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "codex", ThreadID: "one", PaneID: "%1", Status: wire.StatusDone}, false)
+	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "codex", ThreadID: "two", PaneID: "%2", Status: wire.StatusWaiting}, false)
 	s := &Server{Tracker: tr}
 	response := httptest.NewRecorder()
 	s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/result?session=work&pane=%252", nil))
@@ -95,8 +95,8 @@ func TestResultSelectsPaneInMultiAgentSession(t *testing.T) {
 
 func TestResultResolutionErrorIsJSON(t *testing.T) {
 	tr := tracker.New()
-	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "pi", ThreadID: "one", PaneID: "%1", Status: wire.StatusDone}, false)
-	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "pi", ThreadID: "two", PaneID: "%2", Status: wire.StatusDone}, false)
+	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "codex", ThreadID: "one", PaneID: "%1", Status: wire.StatusDone}, false)
+	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "codex", ThreadID: "two", PaneID: "%2", Status: wire.StatusDone}, false)
 	s := &Server{Tracker: tr}
 	response := httptest.NewRecorder()
 	s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/result?session=work&thread=one&pane=%252", nil))

@@ -190,7 +190,7 @@ describe("system tags", () => {
   test("isSystemTag matches bracketed sources only", () => {
     expect(isSystemTag("[bell]")).toBe(true);
     expect(isSystemTag("[event:foo]")).toBe(true);
-    expect(isSystemTag("pi db92")).toBe(false);
+    expect(isSystemTag("cd db92")).toBe(false);
     expect(isSystemTag(undefined)).toBe(false);
   });
 });

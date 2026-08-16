@@ -169,44 +169,6 @@ func TestScanExcludesSidebarAndStashPanes(t *testing.T) {
 	}
 }
 
-func TestScanAgentFromCommandFallback(t *testing.T) {
-	// comm is the runtime ("node"); identity lives in the full command line.
-	psComm := strings.Join([]string{
-		commLine(100, 1, "zsh"),
-		commLine(200, 100, "node"),
-	}, "\n")
-	psFull := strings.Join([]string{
-		fullLine(100, 1, "-zsh"),
-		fullLine(200, 100, "node /Users/kyle/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"),
-	}, "\n")
-
-	s := &Scanner{Run: fakeExec(t, psComm, psFull)}
-	got := onlyPresence(t, s.Scan(workPane()), "work")
-
-	if got.Agent != "pi" {
-		t.Errorf("Agent = %q, want %q via AgentFromCommand fallback", got.Agent, "pi")
-	}
-	if got.PID != 200 {
-		t.Errorf("PID = %d, want 200", got.PID)
-	}
-}
-
-func TestScanPipCommDoesNotMatchPi(t *testing.T) {
-	psComm := strings.Join([]string{
-		commLine(100, 1, "zsh"),
-		commLine(200, 100, "pip"),
-	}, "\n")
-	psFull := strings.Join([]string{
-		fullLine(100, 1, "-zsh"),
-		fullLine(200, 100, "/usr/bin/pip install requests"),
-	}, "\n")
-
-	s := &Scanner{Run: fakeExec(t, psComm, psFull)}
-	if got := s.Scan(workPane()); len(got) != 0 {
-		t.Errorf("Scan() = %#v, want empty ('pip' must not match agent 'pi')", got)
-	}
-}
-
 func TestScanFirstPatternOrderWinsOneAgentPerPane(t *testing.T) {
 	// Two agent children under one pane: claude listed first in ps, but amp
 	// precedes claude-code in AgentCommPatterns, so amp must win.

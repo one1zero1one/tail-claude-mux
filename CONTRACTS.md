@@ -21,7 +21,6 @@ For end-user setup, start with the docs linked from
 endpoint. Adapters claim payloads by the optional `agent` discriminator:
 
 - `agent` missing or `"claude-code"` → Claude Code adapter.
-- `agent: "pi"` → pi adapter.
 - `agent: "codex"` → Codex adapter.
 - Other values are ignored.
 
@@ -72,28 +71,6 @@ agent that fired it.
   reused), or `null` (file absent / no status). `ended` also drops the
   cached thread so a resumed session re-emits cleanly.
 - No polling or file watching after startup.
-
-### Pi (Hook-Based)
-
-- The pi extension (`integrations/pi-extension/`, installed by
-  `bun run scripts/setup-pi-extension.ts`) POSTs pi's snake_case
-  lifecycle events with `agent: "pi"` and a 2s timeout.
-- Status mapping: `session_start` → `idle` (optional `session_name`
-  becomes `threadName`); `agent_start` → `running`;
-  `tool_execution_start` → `running` with a tool description;
-  `tool_execution_end` → `running` (tool-level errors don't change
-  status — the LLM routinely recovers); `agent_end` → `done`, or
-  `interrupted` (`stop_reason: "aborted"`), or `error` with the
-  truncated message; `session_shutdown` → `done` with `ended: true`
-  and immediate thread-state drop.
-- `threadId` is pi's session UUID, so concurrent pi instances in one
-  mux session render as separate rows.
-- Cold start scans `~/.pi/agent/sessions/` files modified in the last
-  5 minutes, reading `SessionHeader.cwd` (pi's directory-name encoding
-  is lossy). Hooks win over the seed.
-- No `probeLiveStatus` yet: a stale pi `running` entry rides the
-  tracker's 30-minute ceiling. Follow-up: probe against
-  `~/.pi/agent/sessions/`.
 
 ### Codex (Hook-Based)
 

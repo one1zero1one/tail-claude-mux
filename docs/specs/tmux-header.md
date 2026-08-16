@@ -12,7 +12,7 @@ This spec is the lasting reference for the tcm tmux status line. It defines the 
 
 ### Goals
 - Replace third-party tmux themes with a status line whose colours and iconography track the active tcm theme (`packages/runtime/src/themes.ts`).
-- Surface an at-a-glance per-window glyph for tmux windows that contain a live agent process (Claude Code, Pi, Codex, …), to aid tab navigation.
+- Surface an at-a-glance per-window glyph for tmux windows that contain a live agent process (Claude Code, Codex, …), to aid tab navigation.
 - **Severity-aware glyph colour.** The per-window glyph is painted in the colour of the dominant agent's severity (working / waiting / ready / stopped / error), so the tab strip doubles as a hands-off status board. Mirrors the panel's left-gutter severity colours.
 - Keep the integration zero-cost on the tmux status repaint hot path (no `#(...)` shell expansions for agent state).
 
@@ -64,7 +64,7 @@ The server is the single writer; tmux is a passive reader. Status-line repaint n
 |---|---|---|
 | `@tcm-agent` | string (single-cell glyph) | Glyph for the dominant agent type in this window. Unset when no live agent is present. |
 | `@tcm-agent-fg` | hex string (`#rrggbb`) or `default` | Foreground colour for the glyph. Resolved per-window from the dominant agent's severity: `working`→`palette.blue`, `waiting`→`palette.yellow`, `ready`→`palette.green`, `stopped`→`palette.surface2`, `error`→`palette.red`. The mapping is locked in `severityColour()` in `tmux-header-sync.ts` and mirrors the panel's left-gutter resolver. |
-| `@tcm-agent-type` | string | Agent name (`claude-code`, `pi`, `codex`, `amp`, …) of the dominant agent. For introspection / future variants. |
+| `@tcm-agent-type` | string | Agent name (`claude-code`, `codex`, `amp`, …) of the dominant agent. For introspection / future variants. |
 
 Lifetime:
 - Set when at least one agent in the window has `liveness === "alive"`.
@@ -101,7 +101,6 @@ Lifetime: re-written when the server detects a theme change. Otherwise stable.
 | Agent name | Glyph | Codepoint | Notes |
 |---|---|---|---|
 | `claude-code` |  / `★` | U+100CC0 *(Clawd)* / U+2605 *(fallback)* | Detect-and-fall-back: emits Clawd when the font is installed, else BLACK STAR. See §4.1. |
-| `pi` | `π` | U+03C0 GREEK SMALL LETTER PI | |
 | `codex` | `▲` | U+25B2 BLACK UP-POINTING TRIANGLE | |
 | `amp` | `♦` | U+2666 BLACK DIAMOND SUIT | |
 | `generic` |  | U+F167A nf-md-robot-outline | Fallback when no specific entry exists. |
@@ -130,7 +129,7 @@ Mascot likeness is a trademark of Anthropic; personal-use vendoring is fine, pub
 ### Precedence (multi-agent windows)
 
 ```
-const AGENT_PRIORITY = ["claude-code", "pi", "codex", "amp"];
+const AGENT_PRIORITY = ["claude-code", "codex", "amp"];
 ```
 
 `pickAgentForWindow(agents)` returns the first match from `AGENT_PRIORITY` present in `agents`, falling back to `agents[0]` and finally to `"generic"`. Mirrors the existing `AGENT_COMM_PATTERNS` ordering in `server/index.ts`.

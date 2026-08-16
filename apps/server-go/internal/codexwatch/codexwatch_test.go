@@ -118,7 +118,7 @@ func TestHookStatusMapAndStrictAgentFilter(t *testing.T) {
 			}
 		})
 	}
-	for _, agent := range []string{"", "claude-code", "pi"} {
+	for _, agent := range []string{"", "claude-code", "other"} {
 		h := newHarness(t)
 		h.adapter.HandleHook(wire.HookPayload{Agent: agent, Event: "Stop", SessionID: "thread", Cwd: "/project"})
 		if len(h.snapshot()) != 0 {

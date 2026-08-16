@@ -26,7 +26,7 @@ cannot read its own install path, so every invocation MUST pass the bundled
 paths in as args: `libDir` (the `${CLAUDE_PLUGIN_ROOT}/workflows/lib` dir) and,
 for delegate, `watchScriptPath` (the
 `${CLAUDE_PLUGIN_ROOT}/workflows/tcm-watch-workflow.js` file). Codex delegates
-only; for claude/pi delegates or when the Workflow tool is unavailable, fall
+only; for claude delegates or when the Workflow tool is unavailable, fall
 back to /codex:rescue.
 
 ## Preconditions (check once, cheaply)

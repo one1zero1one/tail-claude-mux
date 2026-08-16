@@ -95,7 +95,7 @@ function sanitizeThreadName(raw: string): string {
 }
 
 /** Short display form for a threadId.
- *  Uses the last 4 chars of the ID because multiple agents (pi, OpenCode)
+ *  Uses the last 4 chars of the ID because multiple agents (Codex, OpenCode)
  *  produce IDs with deterministic *prefixes* (UUIDv7 timestamp, `ses_`
  *  sigil) while their random bits live at the tail. For Claude Code's
  *  UUIDv4 the distribution is uniform, so the tail is just as good as the

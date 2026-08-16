@@ -38,7 +38,6 @@ export function isClawdInstalled(): boolean {
 export function buildAgentGlyphs(opts: { clawdInstalled: boolean }): Record<string, string> {
   return {
     "claude-code": opts.clawdInstalled ? "\u{100CC0}" : "\u2605",
-    "pi": "\u03C0",
     "codex": "\u{F02D9}", // nf-md-hexagon_outline, OpenAI's hexagonal mark
     "amp": "\u2666",
     "generic": "\u{F167A}",
@@ -49,7 +48,7 @@ export const AGENT_GLYPHS: Record<string, string> = buildAgentGlyphs({
   clawdInstalled: isClawdInstalled(),
 });
 
-export const AGENT_PRIORITY: readonly string[] = ["claude-code", "pi", "codex", "amp"];
+export const AGENT_PRIORITY: readonly string[] = ["claude-code", "codex", "amp"];
 
 // --- Statusline-only glyphs (server-global tmux user options) ---
 //

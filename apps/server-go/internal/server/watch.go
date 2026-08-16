@@ -12,7 +12,6 @@ import (
 	"github.com/kylesnowschwartz/agent-ouija/claude/claudedir"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/ccwatch"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/codexwatch"
-	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/piwatch"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/procwalk"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/tmux"
 	"github.com/kylesnowschwartz/tail-claude-mux/apps/server-go/internal/tracker"
@@ -123,15 +122,6 @@ func (s *Server) StartWatchers() {
 		})
 		log.Printf("agent watcher started: %s", s.Watcher.Name())
 	}
-	if s.PiWatcher != nil {
-		s.PiWatcher.Start(&piwatch.Context{
-			ResolveSession:      s.resolveSessionLocked,
-			ResolveSessionByPid: s.resolveSessionByPidLocked,
-			Emit:                s.emitLocked,
-			Locked:              locked,
-		})
-		log.Printf("agent watcher started: %s", s.PiWatcher.Name())
-	}
 	if s.CodexWatcher != nil {
 		s.CodexWatcher.Start(&codexwatch.Context{
 			ResolveSession:      s.resolveSessionLocked,
@@ -191,8 +181,6 @@ func agentCode(agent string) string {
 	switch agent {
 	case "claude-code":
 		return "cc"
-	case "pi":
-		return "pi"
 	case "codex":
 		return "cd"
 	case "amp":
@@ -234,9 +222,9 @@ func (s *Server) deriveLogEntriesLocked(ev wire.AgentEvent) []wire.MetadataLogEn
 	if ev.Status != last.status {
 		switch ev.Status {
 		case wire.StatusError:
-			// pi's agent_end error carries the truncated error text as the
-			// description (ToolInvoked=false, so the tool-entry path above
-			// skips it) — surface it instead of the bare status word.
+			// An error event's description carries the truncated error text
+			// (ToolInvoked=false, so the tool-entry path above skips it) —
+			// surface it instead of the bare status word.
 			msg := "errored"
 			if ev.ToolDescription != "" {
 				msg = ev.ToolDescription

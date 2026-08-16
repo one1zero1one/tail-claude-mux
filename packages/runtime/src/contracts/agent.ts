@@ -33,9 +33,10 @@ export interface AgentEvent {
   /** Whether the agent process is alive, exited, or unknown (no pane info) */
   liveness?: AgentLiveness;
   /** OS process id of the long-lived agent process. Resolved by the watcher
-   *  via ancestor walk (Claude Code) or reported directly by the extension
-   *  (pi). When present, the tracker's liveness sweep uses `process.kill(pid, 0)`
-   *  to detect crashes that don't fire a SessionEnd hook. Local sessions only. */
+   *  via ancestor walk (Claude Code) or reported directly in the hook payload
+   *  (Codex). When present, the tracker's liveness sweep uses
+   *  `process.kill(pid, 0)` to detect crashes that don't fire a SessionEnd
+   *  hook. Local sessions only. */
   pid?: number;
   /** Human-readable description of current activity, e.g. "Reading config.ts" or "Bash: git push" */
   toolDescription?: string;

@@ -31,7 +31,7 @@ func TestSetStatusDisambiguatesByThread(t *testing.T) {
 	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "codex", ThreadID: "one", PaneID: "%1", Status: wire.StatusDone}, false)
 	tr.ApplyEvent(wire.AgentEvent{Session: "work", Agent: "codex", ThreadID: "two", PaneID: "%2", Status: wire.StatusDone}, false)
 	tm := &tmux.Tmux{Run: func(args ...string) (string, error) { return "", nil }}
-	s := New(&state.Builder{Tmux: tm, Order: sessionorder.Load("")}, tr, nil, nil, nil, nil)
+	s := New(&state.Builder{Tmux: tm, Order: sessionorder.Load("")}, tr, nil, nil, nil)
 	response := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"session":"work","thread":"two","text":"selected"}`)
 	s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/set-status", body))
@@ -52,7 +52,7 @@ func TestHandleFocus_IgnoredSessionKeepsFocus(t *testing.T) {
 		}
 		return "", nil
 	}}
-	s := New(&state.Builder{Tmux: tm, Git: gitinfo.NewCache(), Order: sessionorder.Load("")}, nil, nil, nil, nil, nil)
+	s := New(&state.Builder{Tmux: tm, Git: gitinfo.NewCache(), Order: sessionorder.Load("")}, nil, nil, nil, nil)
 	s.Builder.SetFocused("proj")
 
 	resp := httptest.NewRecorder()

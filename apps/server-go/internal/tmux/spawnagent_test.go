@@ -28,14 +28,13 @@ func TestValidateSpawnAgentRequest(t *testing.T) {
 		{name: "relative dir", req: SpawnAgentRequest{Dir: "relative", Agent: "codex", Prompt: "task", OwnerSession: "owner"}, want: "dir must be an absolute path"},
 		{name: "missing path", req: SpawnAgentRequest{Dir: filepath.Join(dir, "missing"), Agent: "codex", Prompt: "task", OwnerSession: "owner"}, want: "dir does not exist"},
 		{name: "not a directory", req: SpawnAgentRequest{Dir: file, Agent: "codex", Prompt: "task", OwnerSession: "owner"}, want: "dir must be a directory"},
-		{name: "unknown agent", req: SpawnAgentRequest{Dir: dir, Agent: "other", Prompt: "task", OwnerSession: "owner"}, want: "agent must be codex, claude, or pi"},
+		{name: "unknown agent", req: SpawnAgentRequest{Dir: dir, Agent: "other", Prompt: "task", OwnerSession: "owner"}, want: "agent must be codex or claude"},
 		{name: "empty prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", OwnerSession: "owner"}, want: "prompt is required"},
 		{name: "blank prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: " \n\t", OwnerSession: "owner"}, want: "prompt is required"},
-		{name: "pi flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "--help", OwnerSession: "owner"}, want: "this agent cannot accept a prompt that begins with '-'"},
 		{name: "codex flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: "--help", OwnerSession: "owner"}},
 		{name: "claude flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "claude", Prompt: "--help", OwnerSession: "owner"}},
-		{name: "override allows flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "--help", Command: []string{"custom"}, OwnerSession: "owner"}},
-		{name: "valid", req: SpawnAgentRequest{Dir: dir, Agent: "pi", Prompt: "task", OwnerSession: "owner"}},
+		{name: "override allows flag-like prompt", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: "--help", Command: []string{"custom"}, OwnerSession: "owner"}},
+		{name: "valid", req: SpawnAgentRequest{Dir: dir, Agent: "codex", Prompt: "task", OwnerSession: "owner"}},
 	}
 
 	for _, tt := range tests {
@@ -222,10 +221,6 @@ func TestSpawnAgentCommandEndOfOptions(t *testing.T) {
 			want: []string{"claude", "--", "--help"},
 		},
 		{
-			name: "pi keeps normal prompt bare", agent: "pi", prompt: "task",
-			want: []string{"pi", "task"},
-		},
-		{
 			name: "override keeps bare prompt", agent: "codex", prompt: "--help", command: []string{"custom"},
 			want: []string{"custom", "--help"},
 		},
@@ -258,7 +253,7 @@ func TestSpawnAgentWindowTmuxArguments(t *testing.T) {
 		}
 	}}
 	req := SpawnAgentRequest{
-		Dir: dir, Agent: "pi", Prompt: "task", Name: "agent", OwnerSession: "owner",
+		Dir: dir, Agent: "codex", Prompt: "task", Name: "agent", OwnerSession: "owner",
 	}
 	result, err := tm.SpawnAgent(req)
 	if err != nil {

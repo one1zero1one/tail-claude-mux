@@ -314,10 +314,10 @@ func TestClaudeCodeHookAdapter(t *testing.T) {
 
 	// --- Agent discriminator ---
 
-	t.Run("payload with agent: 'pi' is ignored", func(t *testing.T) {
+	t.Run("payload with agent: 'other' is ignored", func(t *testing.T) {
 		a, tc := setup(t)
-		p := hook("session_start", "sess-pi-1", "/tmp/myproject")
-		p.Agent = "pi"
+		p := hook("session_start", "sess-other-1", "/tmp/myproject")
+		p.Agent = "other"
 		a.HandleHook(p)
 
 		wantLen(t, tc.events, 0)

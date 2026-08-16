@@ -2,7 +2,7 @@
 
 A tmux sidebar I built for myself. **Personal tool — fork at your own risk.**
 
-Shows the session list, agent state for Claude Code and pi, and the git branch for each session — in one small pane that lives inside your existing tmux workflow.
+Shows the session list, agent state for Claude Code and Codex, and the git branch for each session — in one small pane that lives inside your existing tmux workflow.
 
 
 ## Install

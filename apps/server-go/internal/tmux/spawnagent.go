@@ -27,7 +27,6 @@ var spawnAgents = map[string]struct {
 }{
 	"codex":  {binary: "codex", endOfOptions: "--"},
 	"claude": {binary: "claude", endOfOptions: "--"},
-	"pi":     {binary: "pi"},
 }
 
 // SpawnAgentRequest is the POST /spawn-agent request.
@@ -110,15 +109,11 @@ func validateSpawnAgentRequest(req SpawnAgentRequest) error {
 	if !info.IsDir() {
 		return &SpawnAgentValidationError{message: "dir must be a directory"}
 	}
-	agent, ok := spawnAgents[req.Agent]
-	if !ok {
-		return &SpawnAgentValidationError{message: "agent must be codex, claude, or pi"}
+	if _, ok := spawnAgents[req.Agent]; !ok {
+		return &SpawnAgentValidationError{message: "agent must be codex or claude"}
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
 		return &SpawnAgentValidationError{message: "prompt is required"}
-	}
-	if len(req.Command) == 0 && agent.endOfOptions == "" && strings.HasPrefix(req.Prompt, "-") {
-		return &SpawnAgentValidationError{message: "this agent cannot accept a prompt that begins with '-'"}
 	}
 	return nil
 }
