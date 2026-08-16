@@ -82,8 +82,9 @@ Follow-ups inherit the profile.
 Ownership is HORIZONTAL: the delegate spawns as a tmux WINDOW (native tab) in
 the launching session — the spawn leg auto-discovers the owner via
 `tmux display-message`; pass
-`"ownerSession": "<name>"` to override. No tmux context → the spawn is
-rejected with 400 `ownerSession is required`; use `/codex:rescue` instead.
+`"ownerSession": "<name>"` to override. No tmux context → the spawn fails
+before any HTTP call, with outcome `spawn-failed` and detail `no-tmux-owner`;
+use `/codex:rescue` instead.
 Closing the owner session reaps its delegate windows.
 
 End the brief with: `When complete, print exactly one line starting with

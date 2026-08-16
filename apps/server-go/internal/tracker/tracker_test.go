@@ -1727,7 +1727,7 @@ func TestApplyPanePresenceHysteresis(t *testing.T) {
 			t.Error("changed = false, want true")
 		}
 		// The scan also mints a codex synthetic; look the seed entry up by
-		// thread (the TS test's index-0 access relied on Map insertion order).
+		// thread ID rather than by slice position.
 		agent := findThread(tr.GetAgents("sess-1"), "abc")
 		if agent == nil {
 			t.Fatal("expected seed entry")

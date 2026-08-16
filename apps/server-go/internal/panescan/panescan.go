@@ -105,7 +105,7 @@ func pidMatchesAgent(pid int, patterns []string, agentName string, tree processT
 			return true
 		}
 	}
-	return agentmatch.AgentFromCommand(comm, tree.cmdlineOf[pid]) == agentName
+	return agentName == agentmatch.AgentClaudeCode && agentmatch.AgentFromCommand(comm, tree.cmdlineOf[pid]) == agentName
 }
 
 // matchTree tests the pane root itself, then walks up to 3 levels of child

@@ -21,12 +21,9 @@ const (
 	tmuxSafeNameSeparator  = "-"
 )
 
-var spawnAgents = map[string]struct {
-	binary       string
-	endOfOptions string
-}{
-	"codex":  {binary: "codex", endOfOptions: "--"},
-	"claude": {binary: "claude", endOfOptions: "--"},
+var spawnAgents = map[string]struct{}{
+	"codex":  {},
+	"claude": {},
 }
 
 // SpawnAgentRequest is the POST /spawn-agent request.
@@ -135,6 +132,9 @@ func (t *Tmux) resolveSpawnAgentName(req SpawnAgentRequest) (string, error) {
 	if name == StashSession {
 		return "", &SpawnAgentValidationError{message: "name is reserved by tcm"}
 	}
+	// The separate list-sessions probe distinguishes a missing owner session
+	// (400 validation error) from tmux itself being unavailable (500),
+	// ahead of the list-windows call that needs the same target.
 	sessions, err := t.listSessions()
 	if err != nil {
 		return "", fmt.Errorf("tmux could not list sessions: %w", err)
@@ -192,11 +192,7 @@ func buildSpawnAgentCommand(req SpawnAgentRequest) string {
 func buildSpawnAgentArgv(req SpawnAgentRequest) []string {
 	argv := append([]string(nil), req.Command...)
 	if len(argv) == 0 {
-		agent := spawnAgents[req.Agent]
-		argv = append(argv, agent.binary)
-		if agent.endOfOptions != "" {
-			argv = append(argv, agent.endOfOptions)
-		}
+		argv = append(argv, req.Agent, "--")
 	}
 	return append(argv, req.Prompt)
 }

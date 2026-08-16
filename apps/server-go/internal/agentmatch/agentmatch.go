@@ -6,7 +6,7 @@
 // AgentFromCommand is the fallback for wrapped launches — nix-wrapped
 // claude, npx/shell wrappers — where comm is the runtime, not the agent. It
 // is a narrowed port of herdr's identify_agent_in_job machinery scoped to
-// the agents tcm receives hooks from: codex and claude-code. Boundary-aware:
+// the agents tcm receives hooks from: claude-code. Boundary-aware:
 // eval flags (`node -e "…claude…"`) carry inline code, not a script path,
 // and are rejected.
 package agentmatch
